@@ -7,6 +7,9 @@
  * digital human or a text pill drops in beside it without touching the state or
  * the tab wiring. The particle sphere is one form, not the product.
  *
+ * The pane also carries a composer: what you type there is sent into the session
+ * shown in the middle column, and the stop control cancels that session's run.
+ *
  * Geometry and palette derive from the Zebra desktop assistant's orb.
  */
 window.__ModuleLoader__.load({
@@ -17,6 +20,9 @@ window.__ModuleLoader__.load({
 
     /** Tab identity; `id` and `kind` are the same string on purpose. */
     const TAB_ID = 'dsh-aura';
+
+    /* Set by `apply`; the pane reads it to reach the live session. */
+    let services = null;
 
     /* ---- form: particle orb -------------------------------------------- */
 
@@ -181,17 +187,26 @@ window.__ModuleLoader__.load({
       return false;
     }
 
+    /** The live session behind this pane, or null when it is not retained. */
+    function bindSession(sessionId) {
+      if (!services || !sessionId) return null;
+      const sessions = services.get('sessions');
+      if (!sessions || typeof sessions.binding !== 'function') return null;
+      const binding = sessions.binding(sessionId);
+      return binding && binding.session ? binding.session : null;
+    }
+
     const PANE = {
       height: '100%',
       minHeight: 0,
       display: 'grid',
-      gridTemplateRows: '1fr auto',
-      placeItems: 'center',
-      gap: 8,
+      gridTemplateRows: '1fr auto auto',
+      gap: 10,
       padding: 16,
       boxSizing: 'border-box',
     };
     const STAGE = { width: '100%', height: '100%', minHeight: 0, display: 'grid', placeItems: 'center' };
+    const CANVAS = { display: 'block', width: '100%', height: '100%' };
     const CAPTION = {
       font: 'inherit',
       fontSize: 11,
@@ -201,9 +216,45 @@ window.__ModuleLoader__.load({
       color: 'var(--dsw-alias-text-secondary, inherit)',
       userSelect: 'none',
     };
-    const CANVAS = { display: 'block', width: '100%', height: '100%' };
 
-    /** The tab body: one presence, filling the pane. */
+    const FOOTER = { display: 'grid', gap: 6 };
+    const ROW = { display: 'flex', gap: 6, alignItems: 'flex-end' };
+    const INPUT = {
+      flex: 1,
+      minHeight: 34,
+      maxHeight: 120,
+      resize: 'none',
+      padding: '7px 9px',
+      borderRadius: 8,
+      border: '1px solid var(--dsw-alias-border-base, rgba(127,127,127,.35))',
+      background: 'transparent',
+      color: 'inherit',
+      font: 'inherit',
+      fontSize: 13,
+      lineHeight: 1.4,
+      boxSizing: 'border-box',
+    };
+    const BUTTON = {
+      flex: '0 0 auto',
+      width: 34,
+      height: 34,
+      display: 'grid',
+      placeItems: 'center',
+      borderRadius: 8,
+      border: '1px solid var(--dsw-alias-border-base, rgba(127,127,127,.35))',
+      background: 'transparent',
+      color: 'inherit',
+      font: 'inherit',
+      fontSize: 14,
+      cursor: 'pointer',
+    };
+    const ERROR = {
+      fontSize: 11,
+      color: 'var(--dsw-alias-text-danger, #e5484d)',
+      wordBreak: 'break-word',
+    };
+
+    /** The tab body: one presence plus a composer that drives this session. */
     function Pane(props) {
       const form = FORMS[FORM] || FORMS.orb;
       const useStatus = props.useSessionStatus || (() => undefined);
@@ -252,12 +303,107 @@ window.__ModuleLoader__.load({
         if (formRef.current) formRef.current.refresh();
       }, [phase]);
 
+      const [draft, setDraft] = React.useState('');
+      const [busy, setBusy] = React.useState(false);
+      const [error, setError] = React.useState(null);
+
+      const send = React.useCallback(async () => {
+        const text = draft.trim();
+        if (!text || busy) return;
+        const session = bindSession(props.sessionId);
+        if (!session) {
+          setError('No live session for this pane.');
+          return;
+        }
+        setBusy(true);
+        setError(null);
+        try {
+          const result = await session.prompt([{ type: 'text', text }], 'queue');
+          if (result && result.ok === false) {
+            setError((result.error && result.error.message) || 'The session refused the message.');
+          } else {
+            setDraft('');
+          }
+        } catch (failure) {
+          setError(String((failure && failure.message) || failure));
+        } finally {
+          setBusy(false);
+        }
+      }, [draft, busy, props.sessionId]);
+
+      const stop = React.useCallback(async () => {
+        const session = bindSession(props.sessionId);
+        if (!session) {
+          setError('No live session for this pane.');
+          return;
+        }
+        setError(null);
+        try {
+          const result = await session.cancel();
+          if (result && result.ok === false) {
+            setError((result.error && result.error.message) || 'The session refused the stop.');
+          }
+        } catch (failure) {
+          setError(String((failure && failure.message) || failure));
+        }
+      }, [props.sessionId]);
+
+      const onKeyDown = React.useCallback(
+        (event) => {
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            send();
+          }
+        },
+        [send],
+      );
+
       return h(
         'div',
         { style: PANE, 'data-aura-phase': phase },
-        h('div', { style: STAGE, role: 'img', 'aria-label': `Aura ${phase}` },
-          h('canvas', { ref: canvasRef, style: CANVAS })),
+        h(
+          'div',
+          { style: STAGE, role: 'img', 'aria-label': `Aura ${phase}` },
+          h('canvas', { ref: canvasRef, style: CANVAS }),
+        ),
         h('div', { style: CAPTION }, phase),
+        h(
+          'div',
+          { style: FOOTER },
+          h(
+            'div',
+            { style: ROW },
+            h('textarea', {
+              style: INPUT,
+              value: draft,
+              rows: 1,
+              placeholder: 'Ask in this session…',
+              'aria-label': 'Message this session',
+              onChange: (event) => setDraft(event.target.value),
+              onKeyDown,
+            }),
+            h(
+              'button',
+              {
+                type: 'button',
+                style: BUTTON,
+                title: 'Send',
+                'aria-label': 'Send',
+                disabled: busy || draft.trim() === '',
+                onClick: send,
+              },
+              '↵',
+            ),
+            running
+              ? h(
+                  'button',
+                  { type: 'button', style: BUTTON, title: 'Stop', 'aria-label': 'Stop', onClick: stop },
+                  '■',
+                )
+              : null,
+          ),
+          error ? h('div', { style: ERROR }, error) : null,
+        ),
       );
     }
 
@@ -273,13 +419,21 @@ window.__ModuleLoader__.load({
         'svg',
         { viewBox: '0 0 16 16', width: 16, height: 16, 'aria-hidden': true },
         h('circle', { cx: 8, cy: 8, r: 3.2, fill: 'currentColor' }),
-        h('circle', { cx: 8, cy: 8, r: 6.4, fill: 'none', stroke: 'currentColor',
-          strokeOpacity: 0.45, strokeWidth: 1 }),
+        h('circle', {
+          cx: 8,
+          cy: 8,
+          r: 6.4,
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeOpacity: 0.45,
+          strokeWidth: 1,
+        }),
       );
 
     return {
       inject: ['slots'],
       apply(ctx) {
+        services = ctx;
         /* Filled by the tab registration so the header button can open it. */
         let open = null;
 
