@@ -38,7 +38,7 @@ window.__ModuleLoader__.load({
         fetch('/aura/diag', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ stage, v: VERSION, ...extra }),
+          body: JSON.stringify({ stage, v: VERSION, at: Date.now(), ...extra }),
         }).catch(() => {});
       } catch {
         /* diagnostics stay silent */
