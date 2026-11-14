@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.22.2';
+const AURA_VERSION = '0.22.3';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -850,6 +850,8 @@ registerProcessor('aura-capture', AuraCapture);`;
       const waiting = useStatus(anyWaiting) === true;
 
       const wasRunning = React.useRef(false);
+      /* Mirrors the live status, because submitting happens outside the effect. */
+      const runningRef = React.useRef(false);
       const [settledAt, setSettledAt] = React.useState(0);
       const [settled, setSettled] = React.useState(false);
       /* Declared before the phase below reads it. */
@@ -1360,6 +1362,7 @@ registerProcessor('aura-capture', AuraCapture);`;
 
       React.useEffect(() => {
         diag('run_watch', { running, was: wasRunning.current, wants: speakNext.current });
+        runningRef.current = running;
         if (wasRunning.current && !running) {
           setSettledAt(Date.now() + SETTLED_MS);
           /* A run we started ends here: read its reply and speak it. */
@@ -1415,7 +1418,11 @@ registerProcessor('aura-capture', AuraCapture);`;
           setBusy(true);
           setError(null);
           try {
-            const result = await session.prompt([{ type: 'text', text: trimmed }], 'queue');
+            /* While a turn is running, a voice input is an interruption, not a
+             * message to read after it. */
+            const mode = runningRef.current ? 'steer' : 'queue';
+            diag('submit_mode', { mode });
+            const result = await session.prompt([{ type: 'text', text: trimmed }], mode);
             if (result && result.ok === false) {
               setError((result.error && result.error.message) || 'The session refused the message.');
               return false;

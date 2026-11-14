@@ -351,5 +351,33 @@ assert.equal(ttsBodies.length, 1, 'a settled run is spoken once');
   await new Promise((resolve) => setTimeout(resolve, 300));
 }
 
+/* ---- a voice input during a run steers it instead of queueing ---------- */
+
+{
+  const textarea4 = container.querySelector('textarea');
+  const setValue4 = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+  running = true;
+  render();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  setValue4.call(textarea4, '打断一下');
+  textarea4.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  container.querySelector('button[aria-label="Send"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(prompts.at(-1).mode, 'steer', 'a message sent during a run interrupts it');
+
+  running = false;
+  render();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  setValue4.call(textarea4, '这一条是排队');
+  textarea4.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  container.querySelector('button[aria-label="Send"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(prompts.at(-1).mode, 'queue', 'a message sent while idle queues');
+}
+
 root.unmount();
 console.log('reply.test.mjs: ok');
