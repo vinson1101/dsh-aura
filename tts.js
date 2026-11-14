@@ -255,9 +255,12 @@ export function createTts(config = {}, readKey = async (configKey) => configKey)
   return {
     name: 'bailian_cosyvoice',
     voice: merged.voice,
-    stream: (options) =>
-      streamSynthesize({
-        apiKey: options.apiKey,
+    /* The key is resolved here, per request, exactly like synthesize does. */
+    stream: async (options) => {
+      const apiKey = await readKey(merged.apiKey);
+      if (!apiKey) throw new Error('Bailian TTS needs an API key');
+      return streamSynthesize({
+        apiKey,
         baseUrl: merged.baseUrl,
         model: merged.model,
         voice: options.voice || merged.voice,
@@ -266,7 +269,8 @@ export function createTts(config = {}, readKey = async (configKey) => configKey)
         text: options.text,
         signal: options.signal,
         onChunk: options.onChunk,
-      }),
+      });
+    },
     async synthesize({ text, voice, signal }) {
       const { spoken, truncated } = speakablePrefix(text, merged.maxChars ?? 300);
       if (!spoken) throw new Error('no text');
