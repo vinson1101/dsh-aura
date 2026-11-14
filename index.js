@@ -412,4 +412,34 @@ export function apply(ctx, config = {}) {
       }),
     'dsh-aura: speech synthesis route',
   );
+
+  /* The desktop app has no Reload menu item and no reload accelerator, so a
+   * page can sit on an old bundle forever. This names the installed version;
+   * the browser half compares it with the one it is running and reloads
+   * itself when they differ. */
+  ctx.effect(
+    () =>
+      ctx.webServer.register({
+        kind: 'exact',
+        path: '/aura/version',
+        handler: async (req, res) => {
+          if (req.method !== 'GET' && req.method !== 'HEAD') {
+            res.writeHead(405);
+            res.end();
+            return;
+          }
+          let version = '0.0.0';
+          try {
+            const manifest = JSON.parse(
+              await readFile(new URL('./package.json', import.meta.url), 'utf8'),
+            );
+            version = String(manifest.version || version);
+          } catch {
+            /* the version is a convenience; a missing manifest is not fatal */
+          }
+          sendJson(res, 200, { version });
+        },
+      }),
+    'dsh-aura: version route',
+  );
 }

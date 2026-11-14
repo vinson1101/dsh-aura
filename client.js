@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.14.0';
+const AURA_VERSION = '0.15.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -761,6 +761,37 @@ registerProcessor('aura-capture', AuraCapture);`;
 
       React.useEffect(() => () => stopSpeaking(), [stopSpeaking]);
 
+      /**
+       * The app has no reload shortcut, so a page can run an old bundle with no
+       * way out. Ask the host which version is installed and reload when it
+       * differs — the alternative is what happened here: hours of changes that
+       * never ran.
+       */
+      React.useEffect(() => {
+        let stopped = false;
+        let timer;
+        const check = async () => {
+          try {
+            const response = await fetch('/aura/version', { cache: 'no-store' });
+            const payload = await response.json();
+            const installed = String(payload.version || '');
+            if (!stopped && installed && installed !== AURA_VERSION) {
+              diag('reload_for_version', { running: AURA_VERSION, installed });
+              window.location.reload();
+              return;
+            }
+          } catch {
+            /* offline or the route is older than this bundle */
+          }
+          if (!stopped) timer = window.setTimeout(check, 5000);
+        };
+        timer = window.setTimeout(check, 4000);
+        return () => {
+          stopped = true;
+          if (timer !== undefined) window.clearTimeout(timer);
+        };
+      }, []);
+
       React.useEffect(() => {
         if (wasRunning.current && !running) {
           setSettledAt(Date.now() + SETTLED_MS);
@@ -1090,6 +1121,17 @@ registerProcessor('aura-capture', AuraCapture);`;
                 onClick: () => void speak('你好，我是 Aura。现在可以听到我说话。'),
               },
               '🔊 试听',
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                style: BUTTON,
+                title: 'Reload the page',
+                'aria-label': 'Reload the page',
+                onClick: () => window.location.reload(),
+              },
+              '⟳',
             ),
             h(
               'button',
