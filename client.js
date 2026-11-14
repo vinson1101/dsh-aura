@@ -1,10 +1,11 @@
 /**
- * dsh-aura — browser half.
+ * dsh-aura — browser half: a presence whose *form* is swappable.
  *
- * One canvas, 1900 precomputed points on a golden-angle sphere. No WebGL, no 3D
- * library, no image assets, no network. The orb breathes at rest, turns faster
- * while a session runs, and takes a colour per phase read from the Session UI
- * status snapshot.
+ * The presence owns the state — phase now, voice later — and a form only renders
+ * it. Today there is one form, a canvas particle orb, and a form is just
+ * `mount(canvas, readPhase) -> { refresh, dispose }`, so a Live2D model, a
+ * digital human or a text pill drops in beside it without touching the state or
+ * the slot wiring. The particle sphere is one form, not the product.
  *
  * Geometry and palette derive from the Zebra desktop assistant's orb.
  */
@@ -13,6 +14,8 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react');
     const h = React.createElement;
+
+    /* ---- form: particle orb -------------------------------------------- */
 
     const COUNT = 1900;
 
@@ -143,7 +146,19 @@ window.__ModuleLoader__.load({
       };
     }
 
-    /** How long the orb stays green after a run settles. */
+    /* ---- forms ---------------------------------------------------------- */
+
+    /**
+     * Interchangeable renderers of the same presence. Each one is
+     * `mount(canvas, readPhase) -> { refresh, dispose }`; adding a form never
+     * touches the state above.
+     */
+    const FORMS = { orb: mountOrb };
+    const FORM = 'orb';
+
+    /* ---- presence ------------------------------------------------------- */
+
+    /** How long a settled run keeps the presence green. */
     const SETTLED_MS = 3500;
 
     /* Selectors run on every status snapshot, so they return primitives: an
@@ -182,7 +197,8 @@ window.__ModuleLoader__.load({
     };
     const CANVAS = { display: 'block', width: '100%', height: '100%' };
 
-    function Aura(props) {
+    function Presence(props) {
+      const form = FORMS[FORM] || FORMS.orb;
       const useStatus = props.useSessionStatus || (() => undefined);
       const running = useStatus(anyRunning) === true;
       const waiting = useStatus(anyWaiting) === true;
@@ -214,19 +230,19 @@ window.__ModuleLoader__.load({
       const canvasRef = React.useRef(null);
       const phaseRef = React.useRef(phase);
       phaseRef.current = phase;
-      const orbRef = React.useRef(null);
+      const formRef = React.useRef(null);
 
       React.useEffect(() => {
-        const orb = mountOrb(canvasRef.current, () => phaseRef.current);
-        orbRef.current = orb;
+        const instance = form.mount(canvasRef.current, () => phaseRef.current);
+        formRef.current = instance;
         return () => {
-          orbRef.current = null;
-          orb.dispose();
+          formRef.current = null;
+          instance.dispose();
         };
       }, []);
 
       React.useEffect(() => {
-        if (orbRef.current) orbRef.current.refresh();
+        if (formRef.current) formRef.current.refresh();
       }, [phase]);
 
       const [hovered, setHovered] = React.useState(false);
@@ -254,7 +270,7 @@ window.__ModuleLoader__.load({
       inject: ['slots'],
       apply(ctx) {
         ctx.slots.inject('shell.overlay', () =>
-          ctx.slots.register({ name: 'shell.overlay', id: 'dsh-aura', order: 40 }, Aura),
+          ctx.slots.register({ name: 'shell.overlay', id: 'dsh-aura', order: 40 }, Presence),
         );
       },
     };

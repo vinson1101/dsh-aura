@@ -1,8 +1,12 @@
 # Aura
 
-A breathing particle sphere pinned to the right edge of the DeepSeek Harness Web
-UI. It is pure canvas: 1900 points on a golden-angle sphere, six depth bands, a
-radial glow, and a rotation you can read at a glance.
+A presence pinned to the right edge of the DeepSeek Harness Web UI, showing what
+the agent is doing. Its first form is a breathing particle sphere: pure canvas,
+1900 points on a golden-angle sphere, six depth bands, a radial glow and a
+rotation you can read at a glance.
+
+A form is only a renderer. Live2D, a digital human or a text pill can replace the
+sphere without changing what the presence reports.
 
 ## What it does
 
@@ -34,6 +38,7 @@ except for the orb itself.
 
 - The orb does not listen, speak, or send messages. It only reports state.
 - It reflects **any** running session, not the one selected in the middle panel.
+- The sphere is the only form; there is no form switcher yet.
 - There is no settings page; the layout is fixed.
 
 ## Requirements

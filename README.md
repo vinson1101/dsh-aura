@@ -1,10 +1,15 @@
 # dsh-aura
 
-A living particle orb for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
+A presence for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness):
+something that lives beside the conversation and shows what the agent is doing,
+and that you will eventually talk to.
 
-One canvas, 1900 points on a golden-angle sphere, no WebGL, no 3D library, no
-image assets, no network. The orb breathes at rest and turns faster while a
-session runs. Its colour follows the session phase.
+**A form is what you see; the orb is only the first one.** Today's form is a
+canvas particle sphere — 1900 points on a golden-angle sphere, no WebGL, no 3D
+library, no image assets, no network. It breathes at rest and turns faster while
+a session runs; its colour follows the session phase. A Live2D model, a digital
+human or a plain status pill can take its place without touching the state or
+the slot wiring.
 
 > **Status: v0.1 — rendering only.** The orb is alive and reads real session
 > state, but it does not speak or drive anything yet. Voice, session control and
@@ -49,6 +54,8 @@ Then reload the Web UI. The orb appears at the right edge, above the composer.
       (`ISession.cancel()`) and steers the new request in (`mode: 'steer'`).
 - [ ] **v0.6 — face.** Expressions and gestures driven by the phase and by the
       streamed thinking chain.
+- [ ] **v0.7 — other forms.** Live2D, a digital human, and a text pill as
+      alternative forms of the same presence, selectable per workspace.
 
 Two rules carried over from the reference desktop client, because they are what
 makes an assistant trustworthy rather than merely decorative:
@@ -59,8 +66,13 @@ makes an assistant trustworthy rather than merely decorative:
 
 ## Design notes
 
-The orb paints into `shell.overlay`, the frame-wide layer that is click-through by
-default; the orb opts back into pointer events so it never blocks the app.
+The presence paints into `shell.overlay`, the frame-wide layer that is
+click-through by default; the orb opts back into pointer events so it never
+blocks the app.
+
+A form is `mount(canvas, readPhase) -> { refresh, dispose }`. `client.js` keeps
+them in one `FORMS` map, so a new form is one entry plus its own renderer — the
+phase machine, the selectors and the slot registration stay put.
 
 Phase comes from the slot's `useSessionStatus` selector hook over
 `ReadonlyMap<SessionId, SessionStatus>`. Selectors return primitives — an object
