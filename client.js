@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.20.2';
+const AURA_VERSION = '0.20.3';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -605,9 +605,13 @@ registerProcessor('aura-capture', AuraCapture);`;
       .aura-foot button:hover { background: rgba(127,127,127,.16); }
       /* Below these widths the parts stop fitting side by side. Drop the words
        * that repeat what the glyph already says, and keep every control. */
+      @container (max-width: 340px) {
+        .aura-btn-text { display: none; }
+        /* Icon-only: square, so the glyph is centred rather than padded. */
+        .aura-icon-btn { min-width: 38px; padding: 0; }
+      }
       @container (max-width: 260px) {
         .aura-chip-text { display: none; }
-        .aura-btn-text { display: none; }
       }
       @container (max-width: 200px) {
         .aura-ava, .aura-ava-fallback { width: 34px; height: 34px; font-size: 15px; }
@@ -721,7 +725,7 @@ registerProcessor('aura-capture', AuraCapture);`;
     const MAX_DRAFT_HEIGHT = 132;
     const INPUT = {
       flex: '1 1 0%',
-      minWidth: 0,
+      minWidth: 44,
       minHeight: 38,
       maxHeight: 132,
       resize: 'none',
@@ -755,6 +759,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       font: 'inherit',
       fontSize: 15,
       lineHeight: 1,
+      whiteSpace: 'nowrap',
       cursor: 'pointer',
     };
     const BUTTON_ACTIVE = {
@@ -1650,7 +1655,8 @@ registerProcessor('aura-capture', AuraCapture);`;
               'button',
               {
                 type: 'button',
-                style: listening ? { ...BUTTON, ...BUTTON_ACTIVE } : BUTTON,
+                className: "aura-icon-btn",
+              style: listening ? { ...BUTTON, ...BUTTON_ACTIVE } : BUTTON,
                 title: `${listening ? 'Stop listening' : 'Speak'} · ${AURA_VERSION}`,
                 'aria-label': listening ? 'Stop listening' : 'Start listening',
                 onClick: toggleMic,
@@ -1662,6 +1668,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               'button',
               {
                 type: 'button',
+                className: "aura-icon-btn",
                 style: BUTTON,
                 title: 'Send',
                 'aria-label': 'Send',
