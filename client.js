@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.10.3';
+const AURA_VERSION = '0.10.4';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -644,6 +644,7 @@ registerProcessor('aura-capture', AuraCapture);`;
           if (!spoken) return;
           stopSpeaking();
           try {
+            diag('tts_request', { chars: spoken.length });
             const response = await fetch('/aura/tts', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
@@ -651,6 +652,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             });
             const payload = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(payload.error || 'speech synthesis failed');
+            diag('tts_ok', { voice: payload.voice, sampleRate: payload.sampleRate });
 
             const bytes = fromBase64(payload.pcm);
             const samples = Math.floor(bytes.length / 2);
@@ -660,6 +662,15 @@ registerProcessor('aura-capture', AuraCapture);`;
             if (!AudioCtor) return;
 
             const audio = new AudioCtor({ sampleRate: rate });
+            /* Chromium starts a context created outside a gesture suspended;
+             * start() on a suspended context plays nothing at all. */
+            if (audio.state === 'suspended') {
+              try {
+                await audio.resume();
+              } catch {
+                /* report through the beacon below */
+              }
+            }
             const buffer = audio.createBuffer(1, samples, rate);
             const channel = buffer.getChannelData(0);
             for (let index = 0; index < samples; index += 1) {
@@ -691,13 +702,17 @@ registerProcessor('aura-capture', AuraCapture);`;
             };
 
             source.onended = () => {
-              if (voiceRef.current === playback) stopSpeaking();
+              if (voiceRef.current !== playback) return;
+              diag('play_end');
+              stopSpeaking();
             };
             voiceRef.current = playback;
             setTalking(true);
             source.start();
             playback.frame = window.requestAnimationFrame(meter);
+            diag('play_start', { state: audio.state, seconds: Number((samples / rate).toFixed(2)) });
           } catch (failure) {
+            diag('tts_error', { message: String((failure && failure.message) || failure).slice(0, 200) });
             setError(String((failure && failure.message) || failure));
           }
         },
@@ -713,7 +728,8 @@ registerProcessor('aura-capture', AuraCapture);`;
           if (speakNext.current) {
             speakNext.current = false;
             const reply = lastAssistantText(props.sessionId);
-            if (reply) void speak(reply);
+          diag('reply_ready', { chars: reply.length });
+          if (reply) void speak(reply);
           }
         }
         wasRunning.current = running;
