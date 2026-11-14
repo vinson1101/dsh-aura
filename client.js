@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.20.1';
+const AURA_VERSION = '0.20.2';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -754,6 +754,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       color: 'inherit',
       font: 'inherit',
       fontSize: 15,
+      lineHeight: 1,
       cursor: 'pointer',
     };
     const BUTTON_ACTIVE = {
@@ -1654,7 +1655,7 @@ registerProcessor('aura-capture', AuraCapture);`;
                 'aria-label': listening ? 'Stop listening' : 'Start listening',
                 onClick: toggleMic,
               },
-              h('span', null, listening ? '●' : '🎙'),
+              listening ? h(StopIcon, null) : h(MicIcon, null),
             h('span', { className: 'aura-btn-text' }, listening ? '在听' : '说话'),
             ),
             h(
@@ -1692,6 +1693,40 @@ registerProcessor('aura-capture', AuraCapture);`;
         h('span', { style: VERSION_LABEL }, AURA_VERSION),
       );
     }
+
+    /** A microphone drawn here, so its size is not up to an emoji font. */
+    const MicIcon = () =>
+      h(
+        'svg',
+        {
+          viewBox: '0 0 24 24',
+          width: 16,
+          height: 16,
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 2,
+          strokeLinecap: 'round',
+          'aria-hidden': true,
+          style: { display: 'block', flex: '0 0 auto' },
+        },
+        h('rect', { x: 9, y: 3, width: 6, height: 11, rx: 3 }),
+        h('path', { d: 'M5 11a7 7 0 0 0 14 0' }),
+        h('line', { x1: 12, y1: 18, x2: 12, y2: 21 }),
+      );
+
+    /** The listening state: a filled square, the usual "stop" shape. */
+    const StopIcon = () =>
+      h(
+        'svg',
+        {
+          viewBox: '0 0 24 24',
+          width: 14,
+          height: 14,
+          'aria-hidden': true,
+          style: { display: 'block', flex: '0 0 auto' },
+        },
+        h('rect', { x: 6, y: 6, width: 12, height: 12, rx: 3, fill: 'currentColor' }),
+      );
 
     /* ---- wiring --------------------------------------------------------- */
 
