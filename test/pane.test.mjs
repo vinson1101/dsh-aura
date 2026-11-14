@@ -185,7 +185,12 @@ assert.ok(
   container.querySelector('button[aria-label="Close Aura profile"]'),
   'the open card must carry a close control',
 );
-assert.ok(container.querySelector('.aura-veil'), 'the card must cover the pane while open');
+/* The card sits in the flow: the sphere is still rendered underneath it, so
+ * nothing is covered and no interaction is replaced. */
+assert.ok(
+  container.querySelector('canvas'),
+  'opening the card must not replace the pane content',
+);
 
 /* A popover you can only close by finding an uncovered spot is a trap. */
 window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));

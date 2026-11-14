@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.18.0';
+const AURA_VERSION = '0.18.1';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -499,7 +499,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       height: '100%',
       minHeight: 0,
       display: 'grid',
-      gridTemplateRows: 'auto 1fr auto auto',
+      gridTemplateRows: 'auto auto 1fr auto auto',
       gap: 10,
       padding: 16,
       boxSizing: 'border-box',
@@ -548,14 +548,12 @@ registerProcessor('aura-capture', AuraCapture);`;
         background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
       .aura-ava-fallback { width: 22px; height: 22px; border-radius: 999px; display: grid; place-items: center;
         font-size: 11px; font-weight: 600; color: #cfe4ff; background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
-      /* Open the card and it owns the pane: no half-covered controls to hunt for. */
-      .aura-veil { position: absolute; inset: 0; z-index: 6; display: flex; justify-content: center;
-        align-items: flex-start; padding: 10px; background: rgba(8,10,14,.55); backdrop-filter: blur(3px);
-        animation: aura-fade .14s ease-out; }
-      @keyframes aura-fade { from { opacity: 0 } to { opacity: 1 } }
-      .aura-card { width: 100%; max-width: 320px; max-height: 100%; overflow-y: auto; overscroll-behavior: contain;
-        padding: 14px; display: grid; gap: 12px; border-radius: 14px; border: 1px solid rgba(127,127,127,.24);
-        background: var(--dsw-alias-bg-base, #191b21); box-shadow: 0 18px 44px rgba(0,0,0,.45); }
+      /* In the flow, not over it: opening the card takes room from the stage so
+       * nothing underneath is hidden and no interaction is replaced. */
+      .aura-panel { display: block; min-height: 0; }
+      .aura-card { width: 100%; max-height: 46vh; overflow-y: auto; overscroll-behavior: contain;
+        padding: 12px; display: grid; gap: 10px; border-radius: 12px;
+        border: 1px solid rgba(127,127,127,.22); background: rgba(127,127,127,.07); }
       .aura-id { display: flex; align-items: center; gap: 10px; }
       .aura-close { margin-left: auto; width: 24px; height: 24px; border-radius: 999px; border: none;
         background: transparent; color: inherit; font: inherit; font-size: 14px; line-height: 1;
@@ -1371,7 +1369,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         panelOpen
           ? h(
               'div',
-              { className: 'aura-veil' },
+              { className: 'aura-panel' },
               h(
               'div',
               { className: 'aura-card', ref: cardRef, role: 'dialog', 'aria-label': 'Aura' },
