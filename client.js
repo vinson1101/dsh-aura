@@ -12,6 +12,10 @@
  *
  * Geometry and palette derive from the Zebra desktop assistant's orb.
  */
+/* Declared before the loader runs: even the first beacon reads it, and a
+ * factory-scope `const` would still be in its dead zone at that point. */
+const AURA_VERSION = '0.10.3';
+
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
   factory(require) {
@@ -22,7 +26,6 @@ window.__ModuleLoader__.load({
     /** Tab identity; `id` and `kind` are the same string on purpose. */
     const TAB_ID = 'dsh-aura';
 
-    const VERSION = '0.10.0';
 
     /** Set once the tab type, body and title are all registered. */
     const registrations = { ready: false };
@@ -34,11 +37,22 @@ window.__ModuleLoader__.load({
      * and lands in $DSH_HOME/aura-diag.jsonl.
      */
     function diag(stage, extra) {
+      const line = JSON.stringify({ stage, v: AURA_VERSION, at: Date.now(), ...extra });
+      try {
+        /* A hot replace or a reload aborts in-flight fetches, which is exactly
+         * when the evidence matters most. sendBeacon is not aborted. */
+        if (navigator && typeof navigator.sendBeacon === 'function') {
+          const body = new Blob([line], { type: 'application/json' });
+          if (navigator.sendBeacon('/aura/diag', body)) return;
+        }
+      } catch {
+        /* fall through to fetch */
+      }
       try {
         fetch('/aura/diag', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ stage, v: VERSION, at: Date.now(), ...extra }),
+          body: line,
         }).catch(() => {});
       } catch {
         /* diagnostics stay silent */
@@ -774,6 +788,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         captureRef.current = null;
         setListening(false);
         if (!capture) return;
+        diag('mic_stop');
         try {
           capture.vad.flush();
         } catch {
@@ -823,6 +838,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             const payload = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(payload.error || 'speech to text failed');
             const text = String(payload.text || '').trim();
+            diag('asr', { bytes: pcm.length, chars: text.length, empty: text.length === 0 });
             /* Silence is an outcome, not a failure: nothing is submitted. */
             if (text) {
               setHeard(text);
@@ -880,6 +896,7 @@ registerProcessor('aura-capture', AuraCapture);`;
           node.port.onmessage = (event) => vad.push(event.data);
           captureRef.current = { stream, audio, source, node, sink, vad };
           setListening(true);
+          diag('mic_start', { rate: audio.sampleRate });
         } catch (failure) {
           setError(String((failure && failure.message) || failure));
         }
