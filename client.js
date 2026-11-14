@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.19.2';
+const AURA_VERSION = '0.19.3';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -894,10 +894,41 @@ registerProcessor('aura-capture', AuraCapture);`;
             }
             return total;
           })();
+          /* Who actually paints this element? Walk the live stylesheets and
+           * keep the rules that match it and set a background. */
+          const winners = [];
+          const target = cards[0];
+          if (target) {
+            for (const sheet of Array.from(document.styleSheets)) {
+              let list;
+              try {
+                list = sheet.cssRules;
+              } catch {
+                continue;
+              }
+              for (const rule of Array.from(list || [])) {
+                const selector = rule.selectorText;
+                const style = rule.style;
+                if (!selector || !style || !style.backgroundColor) continue;
+                try {
+                  if (!target.matches(selector)) continue;
+                } catch {
+                  continue;
+                }
+                winners.push({
+                  selector: selector.slice(0, 120),
+                  color: style.backgroundColor,
+                  important: style.getPropertyPriority('background-color') === 'important',
+                });
+              }
+            }
+          }
+
           diag('card_style', {
             cards: cards.length,
             sheets,
             rules,
+            winners: winners.slice(-6),
             samples: cards.slice(0, 3).map((node) => {
               const style = window.getComputedStyle(node);
               return {
