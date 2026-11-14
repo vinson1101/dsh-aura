@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.10.6';
+const AURA_VERSION = '0.11.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -261,77 +261,112 @@ window.__ModuleLoader__.load({
      * one utterance so a stuck microphone cannot grow without bound.
      */
     const SAMPLE_RATE = 16000;
-    const FRAME_MS = 20;
-    const FRAME_SIZE = (SAMPLE_RATE * FRAME_MS) / 1000;
-    const SILENCE_MS = 1200;
-    const PREROLL_MS = 250;
-    const MIN_SPEECH_MS = 250;
-    const MAX_UTTERANCE_MS = 20000;
     /** 3200 bytes = 100 ms of PCM16 mono: the reference's "no instruction" floor. */
     const MIN_CAPTURE_BYTES = 3200;
     /** A teardown catches whatever was being said; under half a second of it is
      * a fragment, and sending fragments is how half a sentence becomes a turn. */
     const MIN_FLUSH_BYTES = 9600;
-    const ENERGY_THRESHOLD = 0.012;
 
-    /** Frame an arbitrary float stream into 20 ms blocks and cut utterances. */
+    /**
+     * Endpoint detection, ported from the Zebra desktop client
+     * (`desktop/desktop.py: desktop_utterance`).
+     *
+     * Two things there are better than a fixed threshold, and both are kept:
+     *
+     * - the noise floor follows the room (`floor = .8*floor + .2*level`, and
+     *   the threshold is `max(450, floor * 1.65)`), so a fan or a quiet
+     *   microphone does not move the endpoint;
+     * - it decides on two signals: the decoder's own endpoint, and silence.
+     *   The decoder half needs partial results, which the one-shot provider
+     *   cannot give; `stable` and `decoder` are therefore reported but never
+     *   produced until a streaming provider is wired in.
+     *
+     * Numbers are the reference's: 100 ms blocks, 900 ms of quiet, 4 s of
+     * nothing, a 12 s cap.
+     */
+    const CHUNK_MS = 100;
+    const CHUNK_SIZE = (SAMPLE_RATE * CHUNK_MS) / 1000;
+    const QUIET_CHUNKS = 9;
+    const NO_SPEECH_CHUNKS = 40;
+    const MAX_CHUNKS = 120;
+    const THRESHOLD_FLOOR = 450;
+    const THRESHOLD_FACTOR = 1.65;
+    const PEAK_DECAY = 0.975;
+    const FLOOR_DECAY = 0.8;
+    const NOISE_CEILING = 850;
+
     function createVad(onUtterance) {
-      const prerollLimit = Math.round(PREROLL_MS / FRAME_MS);
       let carry = new Float32Array(0);
-      let ring = [];
-      let frames = [];
-      let taking = false;
-      let silence = 0;
+      let chunks = [];
+      let speech = false;
+      let quiet = 0;
+      let floor = null;
+      let peak = 0;
 
-      function rms(block) {
+      /** RMS on the 16-bit scale, the units the reference uses. */
+      function levelOf(block) {
         let sum = 0;
-        for (let i = 0; i < block.length; i += 1) sum += block[i] * block[i];
+        for (let index = 0; index < block.length; index += 1) {
+          const value = block[index] * 0x8000;
+          sum += value * value;
+        }
         return Math.sqrt(sum / block.length);
       }
 
       function toPcm() {
-        const pcm = new Int16Array(frames.length * FRAME_SIZE);
+        const samples = chunks.length * CHUNK_SIZE;
+        const pcm = new Int16Array(samples);
         let offset = 0;
-        for (const frame of frames) {
-          for (let i = 0; i < frame.length; i += 1) {
-            const value = Math.max(-1, Math.min(1, frame[i]));
-            pcm[offset + i] = value < 0 ? value * 0x8000 : value * 0x7fff;
+        for (const chunk of chunks) {
+          for (let index = 0; index < chunk.length; index += 1) {
+            const value = Math.max(-1, Math.min(1, chunk[index]));
+            pcm[offset + index] = value < 0 ? value * 0x8000 : value * 0x7fff;
           }
-          offset += FRAME_SIZE;
+          offset += CHUNK_SIZE;
         }
         return pcm;
       }
 
       function finish(reason) {
-        if (!taking) return;
-        taking = false;
-        const spokenMs = frames.length * FRAME_MS;
+        if (chunks.length === 0) return;
+        const spoken = speech;
         const pcm = toPcm();
-        frames = [];
-        silence = 0;
-        if (spokenMs >= MIN_SPEECH_MS) onUtterance(pcm, reason);
+        const kept = chunks.length;
+        chunks = [];
+        speech = false;
+        quiet = 0;
+        /* Nothing was ever said: the reference returns an empty buffer and the
+         * caller submits nothing. */
+        if (!spoken) {
+          onUtterance(pcm, reason, false);
+          return;
+        }
+        onUtterance(pcm, reason, kept * CHUNK_MS >= 250);
       }
 
       function take(block) {
-        const loud = rms(block) >= ENERGY_THRESHOLD;
-        if (!taking) {
-          ring.push(block);
-          if (ring.length > prerollLimit) ring.shift();
-          if (!loud) return;
-          taking = true;
-          frames = ring.slice();
-          ring = [];
-          silence = 0;
+        chunks.push(block);
+        const level = levelOf(block);
+        peak = Math.max(level, peak * PEAK_DECAY);
+        if (floor === null) floor = Math.min(level, NOISE_CEILING);
+        const threshold = Math.max(THRESHOLD_FLOOR, floor * THRESHOLD_FACTOR);
+        if (level >= threshold) {
+          speech = true;
+          quiet = 0;
+        } else {
+          quiet += 1;
+          floor = FLOOR_DECAY * floor + (1 - FLOOR_DECAY) * Math.min(level, NOISE_CEILING);
+        }
+
+        if (speech && quiet >= QUIET_CHUNKS) {
+          finish('quiet');
           return;
         }
-        frames.push(block);
-        if (loud) {
-          silence = 0;
-        } else {
-          silence += FRAME_MS;
-          if (silence >= SILENCE_MS) finish('silence');
+        if (!speech && chunks.length >= NO_SPEECH_CHUNKS) {
+          finish('no_speech');
+          return;
         }
-        if (taking && frames.length * FRAME_MS >= MAX_UTTERANCE_MS) finish('cap');
+        if (chunks.length >= MAX_CHUNKS) finish('limit');
       }
 
       return {
@@ -344,18 +379,17 @@ window.__ModuleLoader__.load({
             data = merged;
           }
           let offset = 0;
-          while (data.length - offset >= FRAME_SIZE) {
-            take(data.subarray(offset, offset + FRAME_SIZE));
-            offset += FRAME_SIZE;
+          while (data.length - offset >= CHUNK_SIZE) {
+            take(data.subarray(offset, offset + CHUNK_SIZE));
+            offset += CHUNK_SIZE;
           }
           carry = data.slice(offset);
         },
         flush: () => finish('flush'),
         reset() {
-          taking = false;
-          ring = [];
-          frames = [];
-          silence = 0;
+          chunks = [];
+          speech = false;
+          quiet = 0;
         },
       };
     }
@@ -919,12 +953,15 @@ registerProcessor('aura-capture', AuraCapture);`;
           source.connect(node);
           node.connect(sink);
           sink.connect(audio.destination);
-          const vad = createVad((pcm, reason) => {
+          const vad = createVad((pcm, reason, spoken) => {
             diag('capture_end', {
               reason,
               bytes: pcm.length,
               ms: Math.round((pcm.length / 2 / SAMPLE_RATE) * 1000),
+              speech: spoken,
             });
+            /* The reference returns an empty buffer when nobody spoke. */
+            if (!spoken) return;
             /* Below the reference's floor there was no instruction to send. */
             if (pcm.length < MIN_CAPTURE_BYTES) return;
             /* A flush is a teardown, not an ending: only send a real utterance. */
