@@ -205,7 +205,7 @@ window.__ModuleLoader__.load({
       padding: 16,
       boxSizing: 'border-box',
     };
-    const STAGE = { width: '100%', height: '100%', minHeight: 0, display: 'grid', placeItems: 'center' };
+    const STAGE = { width: '100%', height: '100%', minHeight: 160, display: 'grid', placeItems: 'center' };
     const CANVAS = { display: 'block', width: '100%', height: '100%' };
     const CAPTION = {
       font: 'inherit',
@@ -254,6 +254,47 @@ window.__ModuleLoader__.load({
       wordBreak: 'break-word',
     };
 
+    /**
+     * A crash in a slot entry blanks that entry silently, so the pane owns a
+     * boundary that renders the failure in place. Without one, a broken render
+     * looks exactly like "the plugin is not there" — which is its own bug.
+     */
+    class Boundary extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { failure: null };
+      }
+      static getDerivedStateFromError(failure) {
+        return { failure };
+      }
+      componentDidCatch(failure, info) {
+        console.error('dsh-aura: pane crashed', failure, info);
+      }
+      render() {
+        const failure = this.state.failure;
+        if (!failure) return this.props.children;
+        const text = (failure && (failure.stack || failure.message)) || String(failure);
+        return h(
+          'pre',
+          {
+            style: {
+              margin: 0,
+              padding: 12,
+              minHeight: 120,
+              fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+              fontSize: 11,
+              lineHeight: 1.5,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              color: 'var(--dsw-alias-text-danger, #e5484d)',
+              overflow: 'auto',
+            },
+          },
+          text,
+        );
+      }
+    }
+
     /** The tab body: one presence plus a composer that drives this session. */
     function Pane(props) {
       const form = FORMS[FORM] || FORMS.orb;
@@ -291,7 +332,9 @@ window.__ModuleLoader__.load({
       const formRef = React.useRef(null);
 
       React.useEffect(() => {
-        const instance = form.mount(canvasRef.current, () => phaseRef.current);
+        const canvas = canvasRef.current;
+        if (!canvas) return undefined;
+        const instance = form.mount(canvas, () => phaseRef.current);
         formRef.current = instance;
         return () => {
           formRef.current = null;
@@ -407,6 +450,9 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /** Slot entry: the boundary keeps a crash visible instead of blank. */
+    const AuraPane = (props) => h(Boundary, null, h(Pane, props));
+
     /** The tab chip's title. */
     function TabTitle() {
       return h('span', null, 'Aura');
@@ -467,7 +513,7 @@ window.__ModuleLoader__.load({
             );
             keep(
               scope.slots.inject('sidebar.right.pane.tab', () =>
-                scope.slots.register({ name: 'sidebar.right.pane.tab', key: TAB_ID }, Pane),
+                scope.slots.register({ name: 'sidebar.right.pane.tab', key: TAB_ID }, AuraPane),
               ),
             );
             keep(
