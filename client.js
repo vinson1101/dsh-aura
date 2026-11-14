@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.22.4';
+const AURA_VERSION = '0.22.5';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -610,7 +610,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       /* Recording is red, and it breathes, the way a recorder light does. */
       .aura-foot button[data-listening='true'] {
         background: #e5484d; border-color: transparent; color: #fff;
-        animation: aura-record 1.5s ease-out infinite;
+        animation: aura-record 1.5s ease-out infinite !important;
       }
       .aura-foot button[data-listening='true']:hover { background: #d93d42; }
       @keyframes aura-record {
@@ -797,9 +797,13 @@ registerProcessor('aura-capture', AuraCapture);`;
       whiteSpace: 'nowrap',
       cursor: 'pointer',
     };
+    /* Recording red. Inline, because the button's own background is inline and
+     * an inline declaration wins over the stylesheet. */
     const BUTTON_ACTIVE = {
-      borderColor: 'var(--dsw-alias-border-strong, currentColor)',
-      background: 'var(--dsw-alias-bg-raised, rgba(127,127,127,.12))',
+      borderColor: 'transparent',
+      background: '#e5484d',
+      color: '#fff',
+      boxShadow: '0 0 0 0 rgba(229, 72, 77, .55)',
     };
     const ERROR = {
       fontSize: 11,
