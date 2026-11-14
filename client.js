@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.23.2';
+const AURA_VERSION = '0.24.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -86,14 +86,28 @@ window.__ModuleLoader__.load({
       return points;
     })();
 
+    /* One tone per state, and each state also moves differently: colour alone
+     * is not readable at this size. */
     const TONE = {
-      idle: '110,187,250',
-      running: '151,151,255',
-      waiting: '242,151,138',
-      done: '97,222,194',
-      talking: '97,222,194',
+      idle: '110,187,250',      // blue, breathing slowly
+      listening: '94,226,236',  // cyan, holding still
+      running: '151,151,255',   // violet, working
+      waiting: '242,151,138',   // coral, needs a person
+      done: '97,222,194',       // teal, settled
+      talking: '97,222,194',    // teal, speaking
+      error: '239,110,116',     // red, trembling
     };
-    const SPIN = { idle: 0.22, running: 0.39, waiting: 0.26, done: 0.3, talking: 0.34 };
+    const SPIN = {
+      idle: 0.22,
+      listening: 0.06,
+      running: 0.39,
+      waiting: 0.26,
+      done: 0.3,
+      talking: 0.34,
+      error: 0.55,
+    };
+    /* How tight the cloud holds itself: listening pulls in, talking opens up. */
+    const TIGHT = { listening: 0.9, talking: 1.04, error: 0.96, running: 1.02 };
 
     /**
      * A form gets the canvas and the frame it sits in. The form owns its own
@@ -148,13 +162,27 @@ window.__ModuleLoader__.load({
         const tone = TONE[phase] || TONE.idle;
         const fast = phase === 'running' || phase === 'talking';
         const t = elapsed / 1000;
+        const tight = TIGHT[phase] || 1;
+        /* Listening is nearly still and does not answer the microphone, so the
+         * pause reads as "your turn" rather than as more animation. */
+        const listening = phase === 'listening';
+        const thinking = phase === 'running' || phase === 'waiting';
+        const trembling = phase === 'error';
+        const wobble = trembling ? (Math.random() - 0.5) * size * 0.012 : 0;
         /* A louder voice turns the sphere faster and swells it slightly, so the
          * shape reads as speech rather than as a fixed animation. */
         const angle = t * (SPIN[phase] || SPIN.idle) * (1 + level * 0.8);
         const cos = Math.cos(angle);
         const sin = Math.sin(angle);
         const mid = size / 2;
-        const radius = size * (0.36 + 0.008 * Math.sin(t * (fast ? 6 : 2)) + level * 0.035);
+        /* Listening breathes slowly, thinking flickers, speaking answers the
+         * voice, and an error trembles. Same particles, different behaviour. */
+        const breathRate = listening ? 0.9 : thinking ? 1.6 : fast ? 4.2 : 1.4;
+        const breathDepth = listening ? 0.004 : thinking ? 0.006 : fast ? 0.012 : 0.007;
+        const radius =
+          size *
+          tight *
+          (0.36 + breathDepth * Math.sin(t * breathRate) + level * 0.035);
 
         ctx.clearRect(0, 0, size, size);
         const glow = ctx.createRadialGradient(mid, mid, 0, mid, mid, radius * 1.2);
@@ -168,10 +196,14 @@ window.__ModuleLoader__.load({
         for (const [x, y, z, seed] of POINTS) {
           const depth = z * cos - x * sin;
           const wave = 1 + 0.035 * Math.sin(10 * y + t * 2 + seed);
-          const strength = (depth + 1) * 0.5;
+          /* Thinking shows only part of the cloud at any moment: the particles
+           * seem to search rather than sit still. */
+          const twinkle = thinking ? 0.55 + 0.45 * Math.sin(t * 2.4 + seed * 7) : 1;
+          if (thinking && twinkle < 0.62) continue;
+          const strength = (depth + 1) * 0.5 * twinkle;
           groups[Math.min(5, Math.floor(strength * 6))].push([
-            mid + (x * cos + z * sin) * radius * wave,
-            mid + y * radius * wave,
+            mid + (x * cos + z * sin) * radius * wave + wobble,
+            mid + y * radius * wave + wobble,
             Math.max(0.48, size * (0.0008 + 0.0014 * strength)),
           ]);
         }
@@ -911,6 +943,8 @@ registerProcessor('aura-capture', AuraCapture);`;
       const [settledAt, setSettledAt] = React.useState(0);
       const [settled, setSettled] = React.useState(false);
       /* Declared before the phase below reads it. */
+      const [listening, setListening] = React.useState(false);
+      const [error, setError] = React.useState(null);
       const [talking, setTalking] = React.useState(false);
 
       React.useEffect(() => {
@@ -926,15 +960,21 @@ registerProcessor('aura-capture', AuraCapture);`;
         return () => window.clearTimeout(timer);
       }, [settledAt]);
 
-      const phase = talking
-        ? 'talking'
-        : running
-          ? 'running'
-          : waiting
-            ? 'waiting'
-            : settled
-              ? 'done'
-              : 'idle';
+      /* Order matters: the microphone is the most immediate thing happening,
+       * then the voice, then the turn, then a pending question. */
+      const phase = listening
+        ? 'listening'
+        : talking
+          ? 'talking'
+          : error
+            ? 'error'
+            : running
+              ? 'running'
+              : waiting
+                ? 'waiting'
+                : settled
+                  ? 'done'
+                  : 'idle';
 
       const canvasRef = React.useRef(null);
       const phaseRef = React.useRef(phase);
@@ -981,8 +1021,6 @@ registerProcessor('aura-capture', AuraCapture);`;
         element.style.overflowY = element.scrollHeight > MAX_DRAFT_HEIGHT ? 'auto' : 'hidden';
       }, [draft]);
       const [busy, setBusy] = React.useState(false);
-      const [error, setError] = React.useState(null);
-      const [listening, setListening] = React.useState(false);
       const [transcribing, setTranscribing] = React.useState(false);
       const [heard, setHeard] = React.useState('');
       const [prefs, setPrefs] = React.useState(readPrefs);
