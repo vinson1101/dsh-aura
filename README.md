@@ -11,9 +11,9 @@ a session runs; its colour follows the session phase. A Live2D model, a digital
 human or a plain status pill can take its place without touching the state or
 the slot wiring.
 
-> **Status: v0.1 — rendering only.** The orb is alive and reads real session
-> state, but it does not speak or drive anything yet. Voice, session control and
-> interruption come next; see [Roadmap](#roadmap).
+> **Status: v0.2 — a docked presence.** The orb lives in a right-sidebar tab and
+> reads real session state, but it does not speak or drive anything yet. Voice,
+> session control and interruption come next; see [Roadmap](#roadmap).
 
 ![The orb](icon.svg)
 
@@ -40,13 +40,15 @@ Not on the plugin market yet. From a checkout of this repository:
 dsh plugin add /path/to/dsh-aura
 ```
 
-Then reload the Web UI. The orb appears at the right edge, above the composer.
+Then reload the Web UI. A small sphere button appears in the session header;
+clicking it docks the **Aura** tab in the right sidebar, where it stays while you
+work. The tab is also listed in the right bar's own picker.
 
 ## Roadmap
 
 - [x] **v0.1 — orb.** Canvas sphere, session-phase colours, lifecycle disposal.
-- [ ] **v0.2 — wiring.** Read the *current* session instead of every session, and
-      expand the orb into a right panel on click.
+- [x] **v0.2 — docked.** Register a right-sidebar tab type, open it from a header
+      button, and keep it resident beside the conversation.
 - [ ] **v0.3 — ears.** Microphone capture with local VAD, speech-to-text, and a
       message sent into the current session.
 - [ ] **v0.4 — voice.** Spoken replies with streaming TTS, sentence by sentence.
@@ -56,6 +58,10 @@ Then reload the Web UI. The orb appears at the right edge, above the composer.
       streamed thinking chain.
 - [ ] **v0.7 — other forms.** Live2D, a digital human, and a text pill as
       alternative forms of the same presence, selectable per workspace.
+- [ ] **v0.8 — character packs.** A directory format for one character: identity
+      (name, portrait), expression and motion set, voice sample or voice id, and
+      the persona prompt that goes with it. The form loads a pack; swapping a
+      character means pointing at another pack, not editing code.
 
 Two rules carried over from the reference desktop client, because they are what
 makes an assistant trustworthy rather than merely decorative:

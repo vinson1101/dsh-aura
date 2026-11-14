@@ -1,11 +1,11 @@
 /**
- * dsh-aura — browser half: a presence whose *form* is swappable.
+ * dsh-aura — browser half: a presence docked in the right sidebar.
  *
  * The presence owns the state — phase now, voice later — and a form only renders
  * it. Today there is one form, a canvas particle orb, and a form is just
  * `mount(canvas, readPhase) -> { refresh, dispose }`, so a Live2D model, a
  * digital human or a text pill drops in beside it without touching the state or
- * the slot wiring. The particle sphere is one form, not the product.
+ * the tab wiring. The particle sphere is one form, not the product.
  *
  * Geometry and palette derive from the Zebra desktop assistant's orb.
  */
@@ -14,6 +14,9 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react');
     const h = React.createElement;
+
+    /** Tab identity; `id` and `kind` are the same string on purpose. */
+    const TAB_ID = 'dsh-aura';
 
     /* ---- form: particle orb -------------------------------------------- */
 
@@ -52,6 +55,9 @@ window.__ModuleLoader__.load({
      * than a bare cleanup, because the caller must also force a redraw when the
      * phase changes while `prefers-reduced-motion` is on: in that mode no frame
      * is ever scheduled, so nothing else would repaint.
+     *
+     * The sphere fits the smaller canvas dimension, so a tall pane and a wide
+     * pane both stay inside their box.
      */
     function mountOrb(canvas, readPhase) {
       const ctx = canvas.getContext('2d');
@@ -69,9 +75,10 @@ window.__ModuleLoader__.load({
         if (previous && !quiet) elapsed += Math.min(50, now - previous);
         previous = now;
 
+        const ratio = Math.min(window.devicePixelRatio || 1, 2);
         const side = Math.min(
           920,
-          Math.round(canvas.clientWidth * Math.min(window.devicePixelRatio || 1, 2)),
+          Math.round(Math.min(canvas.clientWidth, canvas.clientHeight) * ratio),
         );
         if (!side) return;
         if (canvas.width !== side || canvas.height !== side) canvas.width = canvas.height = side;
@@ -162,7 +169,7 @@ window.__ModuleLoader__.load({
     const SETTLED_MS = 3500;
 
     /* Selectors run on every status snapshot, so they return primitives: an
-     * object would change identity each time and re-render the orb's owner. */
+     * object would change identity each time and re-render the pane. */
     function anyRunning(status) {
       if (!status || typeof status.values !== 'function') return false;
       for (const row of status.values()) if (row && row.running) return true;
@@ -174,30 +181,30 @@ window.__ModuleLoader__.load({
       return false;
     }
 
-    const WRAP = {
-      position: 'fixed',
-      right: 18,
-      bottom: 88,
-      zIndex: 30,
-      display: 'flex',
-      alignItems: 'flex-end',
-      justifyContent: 'flex-end',
-      /* The overlay layer is click-through; the orb opts back in. */
-      pointerEvents: 'none',
-    };
-    const BALL = {
-      pointerEvents: 'auto',
+    const PANE = {
+      height: '100%',
+      minHeight: 0,
       display: 'grid',
+      gridTemplateRows: '1fr auto',
       placeItems: 'center',
-      margin: 0,
-      padding: 0,
-      border: 'none',
-      background: 'transparent',
-      transition: 'width 160ms ease, height 160ms ease',
+      gap: 8,
+      padding: 16,
+      boxSizing: 'border-box',
+    };
+    const STAGE = { width: '100%', height: '100%', minHeight: 0, display: 'grid', placeItems: 'center' };
+    const CAPTION = {
+      font: 'inherit',
+      fontSize: 11,
+      letterSpacing: '0.08em',
+      textTransform: 'uppercase',
+      opacity: 0.55,
+      color: 'var(--dsw-alias-text-secondary, inherit)',
+      userSelect: 'none',
     };
     const CANVAS = { display: 'block', width: '100%', height: '100%' };
 
-    function Presence(props) {
+    /** The tab body: one presence, filling the pane. */
+    function Pane(props) {
       const form = FORMS[FORM] || FORMS.orb;
       const useStatus = props.useSessionStatus || (() => undefined);
       const running = useStatus(anyRunning) === true;
@@ -245,32 +252,117 @@ window.__ModuleLoader__.load({
         if (formRef.current) formRef.current.refresh();
       }, [phase]);
 
-      const [hovered, setHovered] = React.useState(false);
-      const size = hovered ? 104 : 88;
-
       return h(
         'div',
-        { style: WRAP },
-        h(
-          'div',
-          {
-            style: { ...BALL, width: size, height: size },
-            onPointerEnter: () => setHovered(true),
-            onPointerLeave: () => setHovered(false),
-            role: 'img',
-            'aria-label': `Aura ${phase}`,
-            'data-aura-phase': phase,
-          },
-          h('canvas', { ref: canvasRef, style: CANVAS }),
-        ),
+        { style: PANE, 'data-aura-phase': phase },
+        h('div', { style: STAGE, role: 'img', 'aria-label': `Aura ${phase}` },
+          h('canvas', { ref: canvasRef, style: CANVAS })),
+        h('div', { style: CAPTION }, phase),
       );
     }
+
+    /** The tab chip's title. */
+    function TabTitle() {
+      return h('span', null, 'Aura');
+    }
+
+    /* ---- wiring --------------------------------------------------------- */
+
+    const Orbit = () =>
+      h(
+        'svg',
+        { viewBox: '0 0 16 16', width: 16, height: 16, 'aria-hidden': true },
+        h('circle', { cx: 8, cy: 8, r: 3.2, fill: 'currentColor' }),
+        h('circle', { cx: 8, cy: 8, r: 6.4, fill: 'none', stroke: 'currentColor',
+          strokeOpacity: 0.45, strokeWidth: 1 }),
+      );
 
     return {
       inject: ['slots'],
       apply(ctx) {
-        ctx.slots.inject('shell.overlay', () =>
-          ctx.slots.register({ name: 'shell.overlay', id: 'dsh-aura', order: 40 }, Presence),
+        /* Filled by the tab registration so the header button can open it. */
+        let open = null;
+
+        ctx.inject(['sidebarRightTabs'], (scope) => {
+          const disposers = [];
+          const keep = (disposer) => {
+            if (typeof disposer === 'function') disposers.push(disposer);
+          };
+          try {
+            const tabs = scope.sidebarRightTabs;
+            if (!tabs || typeof tabs.register !== 'function') return;
+            const sidebarRight = scope.get('sidebarRight');
+            if (sidebarRight && typeof sidebarRight.openTab === 'function') {
+              open = () => sidebarRight.openTab(TAB_ID);
+            }
+            keep(
+              tabs.register({
+                id: TAB_ID,
+                kind: TAB_ID,
+                title: () => 'Aura',
+                guide: [
+                  {
+                    id: TAB_ID,
+                    order: 40,
+                    title: () => 'Aura',
+                    description: () => 'The agent’s current activity as a particle sphere.',
+                    icon: Orbit,
+                  },
+                ],
+              }),
+            );
+            keep(
+              scope.slots.inject('sidebar.right.pane.tab', () =>
+                scope.slots.register({ name: 'sidebar.right.pane.tab', key: TAB_ID }, Pane),
+              ),
+            );
+            keep(
+              scope.slots.inject('sidebar.right.pane.tab.title', () =>
+                scope.slots.register({ name: 'sidebar.right.pane.tab.title', key: TAB_ID }, TabTitle),
+              ),
+            );
+          } catch {
+            for (const disposer of disposers) disposer();
+            return;
+          }
+          return () => {
+            open = null;
+            for (const disposer of disposers) disposer();
+          };
+        });
+
+        /* One click from the session header, so the tab is findable without
+         * digging through the right bar's guide list. */
+        ctx.slots.inject('conversation.session.header.utilities', () =>
+          ctx.slots.register(
+            { name: 'conversation.session.header.utilities', id: TAB_ID, order: 30 },
+            function AuraButton() {
+              return h(
+                'button',
+                {
+                  type: 'button',
+                  title: 'Aura',
+                  'aria-label': 'Aura',
+                  onClick: () => {
+                    if (open) open();
+                  },
+                  style: {
+                    display: 'grid',
+                    placeItems: 'center',
+                    width: 28,
+                    height: 28,
+                    padding: 0,
+                    border: 'none',
+                    borderRadius: 8,
+                    background: 'transparent',
+                    color: 'inherit',
+                    cursor: 'pointer',
+                  },
+                },
+                h(Orbit, null),
+              );
+            },
+          ),
         );
       },
     };
