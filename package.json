@@ -1,0 +1,54 @@
+{
+  "name": "dsh-aura",
+  "version": "0.1.0",
+  "description": "A living particle orb for DeepSeek Harness: a breathing sphere pinned to the Web UI that turns faster while a session runs and takes a colour per phase.",
+  "license": "MIT",
+  "author": "vinson1101",
+  "type": "module",
+  "icon": "icon.svg",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vinson1101/dsh-aura.git"
+  },
+  "homepage": "https://github.com/vinson1101/dsh-aura",
+  "bugs": {
+    "url": "https://github.com/vinson1101/dsh-aura/issues"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.2.2-rc.1 <0.3.0-0"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "plugin",
+    "orb",
+    "particle",
+    "canvas",
+    "ui"
+  ]
+}

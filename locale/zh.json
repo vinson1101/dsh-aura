@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Aura 粒子球",
+    "description": "固定在 Web UI 上的呼吸粒子球；会话运行时转得更快，并按状态变色。",
+    "detail": "docs/DETAIL.md"
+  }
+}
