@@ -69,6 +69,7 @@ class AudioContextStub {
       start() { played.push({ rate: this.buffer.sampleRate, length: this.buffer.length }); },
       stop() {},
     };
+    createdSources.push(source);
     return source;
   }
   createAnalyser() {
@@ -85,7 +86,13 @@ window.AudioContext = AudioContextStub;
 /* ---- session, providers, services -------------------------------------- */
 
 const ttsBodies = [];
+const beacons = [];
+const createdSources = [];
 window.fetch = async (url, init = {}) => {
+  if (url === '/aura/diag') {
+    beacons.push(JSON.parse(init.body));
+    return { ok: true, status: 200, async json() { return {}; }, async text() { return ''; } };
+  }
   if (url === '/aura/tts') {
     ttsBodies.push(JSON.parse(init.body));
     const pcm = Buffer.alloc(8);
@@ -377,6 +384,21 @@ assert.equal(ttsBodies.length, 1, 'a settled run is spoken once');
   container.querySelector('button[aria-label="Send"]').click();
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(prompts.at(-1).mode, 'queue', 'a message sent while idle queues');
+}
+
+/* ---- a finished utterance reports its end ----------------------------- */
+
+{
+  /* The clock in the stub does not advance, which is exactly the situation
+   * that used to leave the player permanently "speaking". */
+  for (const source of createdSources) {
+    if (typeof source.onended === 'function') source.onended();
+  }
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  assert.ok(
+    beacons.some((beacon) => beacon.stage === 'play_end'),
+    'playback reports its end once the queue drains',
+  );
 }
 
 root.unmount();

@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.23.1';
+const AURA_VERSION = '0.23.2';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1230,7 +1230,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               analyser.connect(audio.destination);
             }
 
-            const playback = existing || { audio, analyser, sources: [], frame: undefined, at: 0 };
+            const playback = existing || { audio, analyser, sources: [], frame: undefined, at: 0, pending: 0, finishTimer: undefined };
             const data = new Uint8Array(analyser.fftSize);
             const meter = () => {
               if (voiceRef.current !== playback) return;
@@ -1256,17 +1256,27 @@ registerProcessor('aura-capture', AuraCapture);`;
               playback.sources.push(source);
               source.onended = () => {
                 playback.sources = playback.sources.filter((item) => item !== source);
-                if (voiceRef.current !== playback || playback.sources.length > 0) return;
-                if (audio.currentTime >= playback.at - 0.05) {
+                if (voiceRef.current !== playback) return;
+                /* The clock can lag a cursor that later sentences moved, which
+                 * is how a finished utterance used to stay "speaking" forever.
+                 * Decide on an empty queue instead, after a grace period in
+                 * which a new sentence may still be appended. */
+                if (playback.sources.length > 0 || playback.pending > 0) return;
+                window.clearTimeout(playback.finishTimer);
+                playback.finishTimer = window.setTimeout(() => {
+                  if (voiceRef.current !== playback) return;
+                  if (playback.sources.length > 0 || playback.pending > 0) return;
                   diag('play_end');
                   stopSpeaking();
-                }
+                }, 400);
               };
               source.start(Math.max(playback.at, audio.currentTime));
               playback.at = Math.max(playback.at, audio.currentTime) + samples.length / rate;
             };
 
             voiceRef.current = playback;
+            playback.pending += 1;
+            window.clearTimeout(playback.finishTimer);
             gateRef.current.active = true;
             setTalking(true);
             if (!existing) playback.frame = window.requestAnimationFrame(meter);
@@ -1294,7 +1304,8 @@ registerProcessor('aura-capture', AuraCapture);`;
               chunks += 1;
               schedule(samples);
             }
-            diag('tts_ok', { chunks });
+            playback.pending = Math.max(0, playback.pending - 1);
+            diag('tts_ok', { chunks, pending: playback.pending });
           } catch (failure) {
             diag('tts_error', { message: String((failure && failure.message) || failure).slice(0, 200) });
             setError(String((failure && failure.message) || failure));
@@ -1991,16 +2002,19 @@ registerProcessor('aura-capture', AuraCapture);`;
               },
               h(SendIcon, null),
             ),
-            running
+            (running || talking)
               ? h(
                   'button',
                   {
                     type: 'button',
                     className: 'aura-icon-btn',
                     style: BUTTON,
-                    title: 'Stop this turn',
-                    'aria-label': 'Stop this turn',
-                    onClick: stop,
+                    title: 'Stop',
+                    'aria-label': 'Stop',
+                    onClick: () => {
+                      stopSpeaking();
+                      if (runningRef.current) void stop();
+                    },
                   },
                   h(HaltIcon, null),
                 )
