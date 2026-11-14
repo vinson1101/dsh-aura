@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.20.3';
+const AURA_VERSION = '0.20.4';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -579,7 +579,8 @@ registerProcessor('aura-capture', AuraCapture);`;
         opacity: .45; cursor: pointer; }
       .aura-close:hover { opacity: 1; background: rgba(127,127,127,.16); }
       .aura-id img, .aura-id .aura-ava-fallback { width: 42px; height: 42px; font-size: 17px; }
-      .aura-name { font-size: 15px; font-weight: 600; letter-spacing: .01em; }
+      .aura-name { font-size: 15px; font-weight: 600; letter-spacing: .01em;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .aura-sub { font-size: 11px; color: var(--dsw-alias-label-tertiary, inherit); opacity: .8; margin-top: 2px; }
       .aura-rule { height: 1px; background: rgba(255,255,255,.1); margin: 0 -4px; }
       .aura-cap { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--dsw-alias-label-tertiary, inherit); opacity: .7; margin-bottom: 6px; }
@@ -612,6 +613,16 @@ registerProcessor('aura-capture', AuraCapture);`;
       }
       @container (max-width: 260px) {
         .aura-chip-text { display: none; }
+      }
+      /* Narrow card: a field and its button no longer fit side by side, and the
+       * mono detail line is the first thing to give way. */
+      @container (max-width: 250px) {
+        .aura-card { padding: 10px; gap: 8px; }
+        .aura-id-mono { display: none; }
+        .aura-stack { flex-wrap: wrap; }
+        .aura-stack .aura-field { flex: 1 1 100%; }
+        .aura-stack .aura-act { margin-left: auto; }
+        .aura-row { padding: 4px; }
       }
       @container (max-width: 200px) {
         .aura-ava, .aura-ava-fallback { width: 34px; height: 34px; font-size: 15px; }
@@ -1549,7 +1560,7 @@ registerProcessor('aura-capture', AuraCapture);`;
                 ),
                 h(
                   'div',
-                  { className: 'aura-row' },
+                  { className: 'aura-row aura-stack' },
                   h('span', { className: 'aura-dot', style: { opacity: 0 } }),
                   h('input', {
                     className: 'aura-field',
@@ -1582,7 +1593,7 @@ registerProcessor('aura-capture', AuraCapture);`;
                 h('div', { className: 'aura-cap' }, '头像'),
                 h(
                   'div',
-                  { className: 'aura-row' },
+                  { className: 'aura-row aura-stack' },
                   h('span', { className: 'aura-dot', style: { opacity: 0 } }),
                   h('label', { className: 'aura-label', style: { cursor: 'pointer' } },
                     '上传图片',
