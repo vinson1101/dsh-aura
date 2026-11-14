@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.19.5';
+const AURA_VERSION = '0.19.6';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -539,16 +539,17 @@ registerProcessor('aura-capture', AuraCapture);`;
       cursor: 'pointer',
     };
     const STYLE = `
-      .aura-top { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-height: 26px; }
-      .aura-chip { display: inline-flex; align-items: center; gap: 7px; padding: 3px 9px 3px 3px;
+      .aura-top { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-height: 60px; }
+      .aura-chip { display: inline-flex; align-items: center; gap: 16px; padding: 4px 14px 4px 4px;
         border: 1px solid transparent; border-radius: 999px; background: transparent; color: inherit;
-        font: inherit; font-size: 13px; cursor: pointer; transition: background .15s ease, border-color .15s ease; }
+        font: inherit; font-size: 28px; font-weight: 500; letter-spacing: -.01em;
+        cursor: pointer; transition: background .15s ease, border-color .15s ease; }
       .aura-chip:hover { background: rgba(127,127,127,.14); border-color: rgba(127,127,127,.22); }
       .aura-chip[aria-expanded='true'] { background: rgba(127,127,127,.16); border-color: rgba(127,127,127,.28); }
-      .aura-ava { width: 26px; height: 26px; border-radius: 999px; object-fit: cover; display: block;
+      .aura-ava { width: 52px; height: 52px; border-radius: 999px; object-fit: cover; display: block;
         background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
-      .aura-ava-fallback { width: 26px; height: 26px; border-radius: 999px; display: grid; place-items: center;
-        font-size: 12px; font-weight: 600; color: #cfe4ff; background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
+      .aura-ava-fallback { width: 52px; height: 52px; border-radius: 999px; display: grid; place-items: center;
+        font-size: 22px; font-weight: 600; color: #cfe4ff; background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
       /* Starts below the chip, never on top of it: the control that opens the
        * card must stay clickable while it is open. */
       /* The theme already owns the popover surface and its glass treatment;
@@ -556,8 +557,8 @@ registerProcessor('aura-capture', AuraCapture);`;
       /* Self-contained glass: the plugin decides its own translucency, so it
        * looks the same in a bare profile as in a decorated one. The theme
        * colour is used only as the tint; the alpha is ours. */
-      .aura-card { position: absolute; top: 48px; right: 8px; width: 276px; padding: 14px;
-      max-height: calc(100% - 56px); overflow-y: auto; overscroll-behavior: contain;
+      .aura-card { position: absolute; top: 74px; right: 8px; width: 276px; padding: 14px;
+      max-height: calc(100% - 82px); overflow-y: auto; overscroll-behavior: contain;
       display: grid; gap: 12px; border-radius: 14px; border: 1px solid rgba(127,127,127,.24);
       background: var(--dsw-alias-bg-base, #191b21); box-shadow: 0 18px 44px rgba(0,0,0,.34); z-index: 6; }
       .aura-id { display: flex; align-items: center; gap: 10px; }
