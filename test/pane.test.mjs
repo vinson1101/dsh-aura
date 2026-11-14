@@ -38,13 +38,18 @@ const context = {
 };
 window.HTMLCanvasElement.prototype.getContext = () => context;
 /* jsdom has no layout engine, so clientWidth/clientHeight are 0 and the form
- * would correctly skip painting. Give the canvas a box to fill. */
-for (const side of ['clientWidth', 'clientHeight']) {
-  Object.defineProperty(window.HTMLCanvasElement.prototype, side, {
-    get: () => 320,
-    configurable: true,
-  });
-}
+ * would correctly skip painting. Give the canvas a deliberately non-square box:
+ * a tall panel is where a square backing store used to stretch the sphere into
+ * an oval, so this shape is the regression case. */
+const BOX = { width: 220, height: 720 };
+Object.defineProperty(window.HTMLCanvasElement.prototype, 'clientWidth', {
+  get: () => BOX.width,
+  configurable: true,
+});
+Object.defineProperty(window.HTMLCanvasElement.prototype, 'clientHeight', {
+  get: () => BOX.height,
+  configurable: true,
+});
 window.matchMedia = (query) => ({
   matches: false,
   media: query,
@@ -159,7 +164,19 @@ assert.equal(pane.component.name, 'AuraPane');
 
 const canvas = container.querySelector('canvas');
 assert.ok(canvas, 'the pane must contain a canvas; rendered instead: ' + text.slice(0, 400));
-assert.ok(canvas.width > 0, 'the form must size the canvas backing store');
+assert.ok(canvas.width > 0 && canvas.height > 0, 'the form must size the canvas backing store');
+/* The bug this guards: a square backing store painted into a tall box renders
+ * an ellipse with pointed ends. The bitmap must keep the box's aspect ratio. */
+const boxRatio = BOX.width / BOX.height;
+const bufferRatio = canvas.width / canvas.height;
+assert.ok(
+  Math.abs(bufferRatio - boxRatio) < 0.01,
+  `the backing store must keep the box aspect (${bufferRatio.toFixed(3)} vs ${boxRatio.toFixed(3)})`,
+);
+assert.ok(
+  Math.max(canvas.width, canvas.height) <= 920,
+  'the longer side must respect the 920 px cap',
+);
 assert.ok(painted.clear > 0, 'the form must paint at least one frame');
 assert.ok(painted.fill > 0, 'the form must fill its depth groups');
 assert.ok(container.querySelector('textarea'), 'the pane must carry its composer');

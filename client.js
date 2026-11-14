@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
     /** Tab identity; `id` and `kind` are the same string on purpose. */
     const TAB_ID = 'dsh-aura';
 
-    const VERSION = '0.5.1';
+    const VERSION = '0.5.2';
 
     /** Set once the tab type, body and title are all registered. */
     const registrations = { ready: false };
@@ -105,13 +105,21 @@ window.__ModuleLoader__.load({
         if (previous && !quiet) elapsed += Math.min(50, now - previous);
         previous = now;
 
+        /* One scale for both axes: a square backing store stretched into a tall
+         * box is exactly the oval this used to draw. Cap the longer side, keep
+         * the ratio. */
         const ratio = Math.min(window.devicePixelRatio || 1, 2);
-        const side = Math.min(
-          920,
-          Math.round(Math.min(canvas.clientWidth, canvas.clientHeight) * ratio),
-        );
-        if (!side) return;
-        if (canvas.width !== side || canvas.height !== side) canvas.width = canvas.height = side;
+        const boxWidth = canvas.clientWidth;
+        const boxHeight = canvas.clientHeight;
+        if (!boxWidth || !boxHeight) return;
+        const scale = Math.min(ratio, 920 / Math.max(boxWidth, boxHeight));
+        const width = Math.max(1, Math.round(boxWidth * scale));
+        const height = Math.max(1, Math.round(boxHeight * scale));
+        const short = Math.min(width, height);
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
+        }
 
         const phase = readPhase() || 'idle';
         const tone = TONE[phase] || TONE.idle;
@@ -120,16 +128,17 @@ window.__ModuleLoader__.load({
         const angle = t * (SPIN[phase] || SPIN.idle);
         const cos = Math.cos(angle);
         const sin = Math.sin(angle);
-        const mid = side / 2;
-        const radius = side * (0.36 + 0.008 * Math.sin(t * (fast ? 6 : 2)));
+        const midX = width / 2;
+        const midY = height / 2;
+        const radius = short * (0.36 + 0.008 * Math.sin(t * (fast ? 6 : 2)));
 
-        ctx.clearRect(0, 0, side, side);
-        const glow = ctx.createRadialGradient(mid, mid, 0, mid, mid, radius * 1.2);
+        ctx.clearRect(0, 0, width, height);
+        const glow = ctx.createRadialGradient(midX, midY, 0, midX, midY, radius * 1.2);
         glow.addColorStop(0, `rgba(${tone},.21)`);
         glow.addColorStop(0.68, `rgba(${tone},.06)`);
         glow.addColorStop(1, `rgba(${tone},0)`);
         ctx.fillStyle = glow;
-        ctx.fillRect(0, 0, side, side);
+        ctx.fillRect(0, 0, width, height);
 
         const groups = Array.from({ length: 6 }, () => []);
         for (const [x, y, z, seed] of POINTS) {
@@ -137,9 +146,9 @@ window.__ModuleLoader__.load({
           const wave = 1 + 0.035 * Math.sin(10 * y + t * 2 + seed);
           const strength = (depth + 1) * 0.5;
           groups[Math.min(5, Math.floor(strength * 6))].push([
-            mid + (x * cos + z * sin) * radius * wave,
-            mid + y * radius * wave,
-            Math.max(0.48, side * (0.0008 + 0.0014 * strength)),
+            midX + (x * cos + z * sin) * radius * wave,
+            midY + y * radius * wave,
+            Math.max(0.48, short * (0.0008 + 0.0014 * strength)),
           ]);
         }
         groups.forEach((group, index) => {
