@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.21.4';
+const AURA_VERSION = '0.21.5';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1081,6 +1081,10 @@ registerProcessor('aura-capture', AuraCapture);`;
         }
       };
       const speakNext = React.useRef(readArmed());
+      /* The window still shows the previous reply for a moment after a run
+       * ends, so the text from before this turn is captured and the new one is
+       * whatever differs from it. */
+      const replyBefore = React.useRef('');
 
       /** Stop playback and let the sphere settle. */
       const stopSpeaking = React.useCallback(() => {
@@ -1252,9 +1256,25 @@ registerProcessor('aura-capture', AuraCapture);`;
           /* A run we started ends here: read its reply and speak it. */
           if (speakNext.current) {
             armSpeak(false);
-            const reply = lastAssistantText(props.sessionId);
-          diag('reply_ready', { chars: reply.length });
-          if (reply) void speak(reply);
+            /* Poll briefly: the new message can land a moment after the run
+             * flips to idle, and speaking the previous reply is worse than a
+             * short wait. */
+            const baseline = replyBefore.current;
+            const watched = props.sessionId;
+            let attempts = 0;
+            const take = () => {
+              const text = lastAssistantText(watched);
+              const fresh = Boolean(text) && text !== baseline;
+              diag('reply_ready', { chars: text.length, fresh, attempt: attempts });
+              if (fresh) {
+                replyBefore.current = text;
+                void speak(text);
+                return;
+              }
+              attempts += 1;
+              if (attempts < 10) window.setTimeout(take, 200);
+            };
+            window.setTimeout(take, 120);
           }
         }
         wasRunning.current = running;
@@ -1278,8 +1298,9 @@ registerProcessor('aura-capture', AuraCapture);`;
               setError((result.error && result.error.message) || 'The session refused the message.');
               return false;
             }
+            replyBefore.current = lastAssistantText(props.sessionId);
             armSpeak(true);
-            diag('speak_armed', { chars: trimmed.length });
+            diag('speak_armed', { chars: trimmed.length, before: replyBefore.current.length });
             return true;
           } catch (failure) {
             setError(String((failure && failure.message) || failure));

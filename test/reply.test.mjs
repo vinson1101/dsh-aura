@@ -116,6 +116,9 @@ const session = {
   async prompt(content, mode) { prompts.push({ content, mode }); return { ok: true, value: { accepted: true } }; },
   async cancel() { return { ok: true, value: { accepted: true } }; },
 };
+/* The window holds the previous reply during a run; the new one appears when it
+ * ends. The pane must speak the difference, not whatever is newest. */
+let replyText = '这是上一轮的回复。';
 const eventSource = {
   getSnapshot() {
     return {
@@ -125,7 +128,7 @@ const eventSource = {
           type: 'event',
           event: {
             type: 'assistant/message',
-            data: { message: { role: 'assistant', content: [{ type: 'text', text: '收到，我来处理。' }] } },
+            data: { message: { role: 'assistant', content: [{ type: 'text', text: replyText }] } },
           },
         },
       ],
@@ -232,9 +235,12 @@ render();
 await new Promise((resolve) => setTimeout(resolve, 20));
 assert.equal(ttsBodies.length, 0, 'nothing is spoken while the run is in flight');
 
+replyText = '收到，我来处理。';
 running = false;
 render();
-await new Promise((resolve) => setTimeout(resolve, 40));
+/* The pane waits ~120 ms then polls for a message that differs from the reply
+ * it saw before this turn. */
+await new Promise((resolve) => setTimeout(resolve, 300));
 
 /* ---- the reply is spoken ------------------------------------------------ */
 
