@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.19.0';
+const AURA_VERSION = '0.19.1';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -889,15 +889,35 @@ registerProcessor('aura-capture', AuraCapture);`;
          * compositor drops both look like "nothing changed". Report the
          * computed values so the next question is answered by data. */
         window.setTimeout(() => {
-          const card = cardRef.current;
-          if (!card) return;
-          const style = window.getComputedStyle(card);
+          /* Every card on the page, not just this one: a stale instance from an
+           * earlier bundle would explain a style that does not match the source. */
+          const cards = Array.from(document.querySelectorAll('.aura-card'));
+          const sheets = Array.from(document.styleSheets).length;
+          const rules = (() => {
+            let total = 0;
+            for (const sheet of Array.from(document.styleSheets)) {
+              try {
+                total += sheet.cssRules.length;
+              } catch {
+                /* cross-origin sheet */
+              }
+            }
+            return total;
+          })();
           diag('card_style', {
-            background: style.backgroundColor,
-            backdrop: style.backdropFilter || style.webkitBackdropFilter || '',
-            opacity: style.opacity,
+            cards: cards.length,
+            sheets,
+            rules,
+            samples: cards.slice(0, 3).map((node) => {
+              const style = window.getComputedStyle(node);
+              return {
+                background: style.backgroundColor,
+                backdrop: style.backdropFilter || style.webkitBackdropFilter || '',
+                connected: node.isConnected,
+              };
+            }),
           });
-        }, 120);
+        }, 150);
         const onPointerDown = (event) => {
           const card = cardRef.current;
           if (card && !card.contains(event.target)) setPanelOpen(false);
