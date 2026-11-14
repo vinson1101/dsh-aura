@@ -271,7 +271,6 @@ export function createTts(config = {}, readKey = async (configKey) => configKey)
         model: modelOf(options.model),
         apiKey,
         baseUrl: merged.baseUrl,
-        model: modelOf(model),
         voice: options.voice || merged.voice,
         sampleRate: merged.sampleRate,
         timeoutMs: merged.timeoutMs,

@@ -192,3 +192,32 @@ console.log('tts.test.mjs: ok');
   /* Empty input still yields something to say. */
   assert.deepEqual(textSegments('   '), ['我没听清。']);
 }
+
+/* ---- the streaming path builds one request, with a usable model --------- */
+
+{
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push(JSON.parse(init.body));
+    const sse = 'data: {"output":{"audio":{"data":"' + Buffer.alloc(32).toString('base64') + '"}}}\n\n';
+    const bytes = new TextEncoder().encode(sse);
+    return {
+      ok: true,
+      status: 200,
+      body: (async function* stream() { yield bytes; })(),
+      async text() { return ''; },
+    };
+  };
+  try {
+    const { createTts } = await import('../tts.js');
+    const tts = createTts({ model: 'cosyvoice-v3-flash' }, async () => 'k');
+    let total = 0;
+    await tts.stream({ text: '你好。', voice: 'longanyang', onChunk: (chunk) => { total += chunk.length; } });
+    assert.equal(calls.length, 1, 'one request per segment');
+    assert.equal(calls[0].model, 'cosyvoice-v3-flash', 'the request names a model');
+    assert.ok(total > 0, 'audio reached the caller');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
