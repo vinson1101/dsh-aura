@@ -1,6 +1,6 @@
 {
   "name": "dsh-aura",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "A living particle orb for DeepSeek Harness: a breathing sphere pinned to the Web UI that turns faster while a session runs and takes a colour per phase.",
   "license": "MIT",
   "author": "vinson1101",
@@ -50,5 +50,13 @@
     "particle",
     "canvas",
     "ui"
-  ]
+  ],
+  "devDependencies": {
+    "jsdom": "^31.0.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "scripts": {
+    "test": "node test/pane.test.mjs"
+  }
 }

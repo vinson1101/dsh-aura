@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
     /** Tab identity; `id` and `kind` are the same string on purpose. */
     const TAB_ID = 'dsh-aura';
 
-    const VERSION = '0.4.0';
+    const VERSION = '0.5.0';
 
     /** Set once the tab type, body and title are all registered. */
     const registrations = { ready: false };
@@ -190,7 +190,7 @@ window.__ModuleLoader__.load({
      * `mount(canvas, readPhase) -> { refresh, dispose }`; adding a form never
      * touches the state above.
      */
-    const FORMS = { orb: mountOrb };
+    const FORMS = { orb: { mount: mountOrb } };
     const FORM = 'orb';
 
     /* ---- presence ------------------------------------------------------- */
