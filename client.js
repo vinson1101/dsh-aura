@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.22.3';
+const AURA_VERSION = '0.22.4';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -607,15 +607,25 @@ registerProcessor('aura-capture', AuraCapture);`;
       .aura-foot button { height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid rgba(127,127,127,.3);
         background: transparent; color: inherit; font: inherit; font-size: 11px; cursor: pointer; }
       .aura-foot button:hover { background: rgba(127,127,127,.16); }
+      /* Recording is red, and it breathes, the way a recorder light does. */
+      .aura-foot button[data-listening='true'] {
+        background: #e5484d; border-color: transparent; color: #fff;
+        animation: aura-record 1.5s ease-out infinite;
+      }
+      .aura-foot button[data-listening='true']:hover { background: #d93d42; }
+      @keyframes aura-record {
+        0% { box-shadow: 0 0 0 0 rgba(229, 72, 77, .55); }
+        70% { box-shadow: 0 0 0 9px rgba(229, 72, 77, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .aura-foot button[data-listening='true'] { animation: none; }
+      }
       /* Below these widths the parts stop fitting side by side. Drop the words
        * that repeat what the glyph already says, and keep every control. */
       /* The pane is 300px at its narrowest and 680px at its widest, so the
        * tiers sit inside that range rather than below it. */
-      @container (max-width: 380px) {
-        .aura-btn-text { display: none; }
-        /* Icon-only: square, so the glyph is centred rather than padded. */
-        .aura-icon-btn { min-width: 38px; padding: 0; }
-      }
+
       @container (max-width: 240px) {
         .aura-chip-text { display: none; }
         .aura-stack { flex-wrap: wrap; }
@@ -772,9 +782,9 @@ registerProcessor('aura-capture', AuraCapture);`;
       alignItems: 'center',
       justifyContent: 'center',
       gap: 6,
-      minWidth: 40,
-      height: 38,
-      padding: '0 14px',
+      minWidth: 42,
+      height: 42,
+      padding: 0,
       display: 'grid',
       placeItems: 'center',
       borderRadius: 10,
@@ -1887,14 +1897,14 @@ registerProcessor('aura-capture', AuraCapture);`;
               'button',
               {
                 type: 'button',
-                className: "aura-icon-btn",
+                className: 'aura-icon-btn aura-mic',
+                'data-listening': String(listening),
               style: listening ? { ...BUTTON, ...BUTTON_ACTIVE } : BUTTON,
                 title: `${listening ? 'Stop listening' : 'Speak'} · ${AURA_VERSION}`,
                 'aria-label': listening ? 'Stop listening' : 'Start listening',
                 onClick: toggleMic,
               },
               listening ? h(StopIcon, null) : h(MicIcon, null),
-            h('span', { className: 'aura-btn-text' }, listening ? '在听' : '说话'),
             ),
             h(
               'button',
@@ -1907,13 +1917,20 @@ registerProcessor('aura-capture', AuraCapture);`;
                 disabled: busy || draft.trim() === '',
                 onClick: send,
               },
-              '↵',
+              h(SendIcon, null),
             ),
             running
               ? h(
                   'button',
-                  { type: 'button', style: BUTTON, title: 'Stop', 'aria-label': 'Stop', onClick: stop },
-                  '■',
+                  {
+                    type: 'button',
+                    className: 'aura-icon-btn',
+                    style: BUTTON,
+                    title: 'Stop',
+                    'aria-label': 'Stop',
+                    onClick: stop,
+                  },
+                  h(StopIcon, null),
                 )
               : null,
           ),
@@ -1951,6 +1968,26 @@ registerProcessor('aura-capture', AuraCapture);`;
         h('rect', { x: 9, y: 3, width: 6, height: 11, rx: 3 }),
         h('path', { d: 'M5 11a7 7 0 0 0 14 0' }),
         h('line', { x1: 12, y1: 18, x2: 12, y2: 21 }),
+      );
+
+    /** Send: an arrow, drawn like the other two instead of a keyboard glyph. */
+    const SendIcon = () =>
+      h(
+        'svg',
+        {
+          viewBox: '0 0 24 24',
+          width: 16,
+          height: 16,
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 2,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': true,
+          style: { display: 'block', flex: '0 0 auto' },
+        },
+        h('path', { d: 'M12 19V5' }),
+        h('path', { d: 'm5 12 7-7 7 7' }),
       );
 
     /** The listening state: a filled square, the usual "stop" shape. */
