@@ -39,7 +39,7 @@ window.__ModuleLoader__.load({
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ stage, v: VERSION, ...extra }),
-        });
+        }).catch(() => {});
       } catch {
         /* diagnostics stay silent */
       }
