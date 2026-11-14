@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.21.5';
+const AURA_VERSION = '0.22.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1114,7 +1114,6 @@ registerProcessor('aura-capture', AuraCapture);`;
         async (text, voice) => {
           const spoken = String(text || '').trim();
           if (!spoken) return;
-          stopSpeaking();
           try {
             diag('tts_request', { chars: spoken.length });
             const response = await fetch('/aura/tts', {
@@ -1130,7 +1129,10 @@ registerProcessor('aura-capture', AuraCapture);`;
             const rate = Number(response.headers.get('x-aura-sample-rate')) || SAMPLE_RATE;
             const AudioCtor = window.AudioContext || window.webkitAudioContext;
             if (!AudioCtor) throw new Error('This browser exposes no Web Audio.');
-            const audio = new AudioCtor({ sampleRate: rate });
+            const existing = voiceRef.current;
+            /* Sentences are queued: reuse the player so the next one starts
+             * where the last ended instead of cutting it off. */
+            const audio = existing ? existing.audio : new AudioCtor({ sampleRate: rate });
             if (audio.state === 'suspended') {
               try {
                 await audio.resume();
@@ -1139,11 +1141,13 @@ registerProcessor('aura-capture', AuraCapture);`;
               }
             }
 
-            const analyser = audio.createAnalyser();
-            analyser.fftSize = 512;
-            analyser.connect(audio.destination);
+            const analyser = existing ? existing.analyser : audio.createAnalyser();
+            if (!existing) {
+              analyser.fftSize = 512;
+              analyser.connect(audio.destination);
+            }
 
-            const playback = { audio, analyser, sources: [], frame: undefined, at: 0 };
+            const playback = existing || { audio, analyser, sources: [], frame: undefined, at: 0 };
             const data = new Uint8Array(analyser.fftSize);
             const meter = () => {
               if (voiceRef.current !== playback) return;
@@ -1181,7 +1185,7 @@ registerProcessor('aura-capture', AuraCapture);`;
 
             voiceRef.current = playback;
             setTalking(true);
-            playback.frame = window.requestAnimationFrame(meter);
+            if (!existing) playback.frame = window.requestAnimationFrame(meter);
             diag('play_start', { state: audio.state, rate });
 
             const reader = response.body.getReader();
@@ -1217,6 +1221,78 @@ registerProcessor('aura-capture', AuraCapture);`;
       );
 
       React.useEffect(() => () => stopSpeaking(), [stopSpeaking]);
+
+      /* ---- speaking while the answer is still arriving ------------------- */
+
+      const speechBuffer = React.useRef('');
+      const spokeAny = React.useRef(false);
+
+      /** First sentence end, or a hard cut at the segment length. */
+      const boundaryIn = (text) => {
+        for (let index = 0; index < text.length; index += 1) {
+          if ('。！？!?；;\n'.includes(text[index])) return index;
+          if (index + 1 >= 60) return index;
+        }
+        return -1;
+      };
+
+      /**
+       * Feed one live text delta in and speak whatever segments it completes.
+       * The bridge does the same in streaming.py: SpeakableSegments.
+       */
+      const appendSpeech = React.useCallback(
+        (text) => {
+          if (!speakNext.current || !text) return;
+          speechBuffer.current += text;
+          for (;;) {
+            const boundary = boundaryIn(speechBuffer.current);
+            if (boundary < 0) return;
+            const segment = speechBuffer.current.slice(0, boundary + 1).trim();
+            speechBuffer.current = speechBuffer.current.slice(boundary + 1);
+            if (!segment) continue;
+            spokeAny.current = true;
+            void speak(segment);
+          }
+        },
+        [speak],
+      );
+
+      /* Subscribe to the live tokens while a run we started is in flight. */
+      React.useEffect(() => {
+        if (!running) return undefined;
+        const sessions = services && services.get ? services.get('sessions') : null;
+        const binding = sessions && typeof sessions.binding === 'function' ? sessions.binding(props.sessionId) : null;
+        const source = binding && binding.eventSource;
+        if (!source || typeof source.subscribe !== 'function') return undefined;
+
+        let seen = -1;
+        const onSnapshot = () => {
+          const snapshot = typeof source.getSnapshot === 'function' ? source.getSnapshot() : null;
+          const entries = (snapshot && snapshot.entries) || [];
+          for (const entry of entries) {
+            const event = entry && entry.event;
+            if (!event || event.type !== 'assistant/live-chunk') continue;
+            const seq = typeof event.seq === 'number' ? event.seq : 0;
+            if (seen === -1) {
+              /* Skip everything that predates this subscription. */
+              seen = Math.max(seen, seq);
+              continue;
+            }
+            if (seq <= seen) continue;
+            seen = seq;
+            const chunk = event.data && event.data.chunk;
+            if (chunk && chunk.type === 'text-delta' && typeof chunk.text === 'string') {
+              appendSpeech(chunk.text);
+            }
+          }
+          if (seen === -1) seen = 0;
+        };
+        const unsubscribe = source.subscribe(onSnapshot);
+        onSnapshot();
+        return () => {
+          if (typeof unsubscribe === 'function') unsubscribe();
+        };
+      }, [running, appendSpeech, props.sessionId]);
 
       /**
        * The app has no reload shortcut, so a page can run an old bundle with no
@@ -1256,9 +1332,22 @@ registerProcessor('aura-capture', AuraCapture);`;
           /* A run we started ends here: read its reply and speak it. */
           if (speakNext.current) {
             armSpeak(false);
-            /* Poll briefly: the new message can land a moment after the run
-             * flips to idle, and speaking the previous reply is worse than a
-             * short wait. */
+            /* Whatever the stream left unfinished is the last sentence. */
+            const tail = speechBuffer.current.trim();
+            speechBuffer.current = '';
+            if (tail) {
+              spokeAny.current = true;
+              void speak(tail);
+            }
+            if (spokeAny.current) {
+              spokeAny.current = false;
+              diag('reply_streamed', { ok: true });
+              wasRunning.current = running;
+              return;
+            }
+            /* Nothing streamed: fall back to the finished message. Poll
+             * briefly, because the new message can land a moment after the run
+             * flips to idle, and speaking the previous reply is worse. */
             const baseline = replyBefore.current;
             const watched = props.sessionId;
             let attempts = 0;

@@ -119,22 +119,42 @@ const session = {
 /* The window holds the previous reply during a run; the new one appears when it
  * ends. The pane must speak the difference, not whatever is newest. */
 let replyText = '这是上一轮的回复。';
+const entries = [
+  { type: 'event', event: { type: 'user/message', data: {} } },
+  {
+    type: 'event',
+    event: {
+      type: 'assistant/message',
+      data: { message: { role: 'assistant', content: [{ type: 'text', text: replyText }] } },
+    },
+  },
+];
+const listeners = new Set();
+let liveSeq = 0;
 const eventSource = {
   getSnapshot() {
-    return {
-      entries: [
-        { type: 'event', event: { type: 'user/message', data: {} } },
-        {
-          type: 'event',
-          event: {
-            type: 'assistant/message',
-            data: { message: { role: 'assistant', content: [{ type: 'text', text: replyText }] } },
-          },
-        },
-      ],
-    };
+    return { entries };
   },
-  subscribe() { return () => {}; },
+  subscribe(listener) {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  },
+  /* One live text delta, as the real window publishes while a run streams. */
+  pushLive(text) {
+    liveSeq += 1;
+    entries.push({
+      type: 'transient',
+      event: { type: 'assistant/live-chunk', seq: liveSeq, data: { chunk: { type: 'text-delta', index: 0, text } } },
+    });
+    for (const listener of listeners) listener();
+  },
+  /* The finished message landing in the durable log. */
+  finish(text) {
+    entries.push({
+      type: 'event',
+      event: { type: 'assistant/message', data: { message: { role: 'assistant', content: [{ type: 'text', text }] } } },
+    });
+  },
 };
 const services = {
   get(name) {
@@ -236,6 +256,7 @@ await new Promise((resolve) => setTimeout(resolve, 20));
 assert.equal(ttsBodies.length, 0, 'nothing is spoken while the run is in flight');
 
 replyText = '收到，我来处理。';
+eventSource.finish(replyText);
 running = false;
 render();
 /* The pane waits ~120 ms then polls for a message that differs from the reply
@@ -255,6 +276,49 @@ running = false;
 render();
 await new Promise((resolve) => setTimeout(resolve, 20));
 assert.equal(ttsBodies.length, 1, 'a settled run is spoken once');
+
+/* ---- a streaming run is spoken while it is still going ------------------ */
+
+{
+  const before = ttsBodies.length;
+  const textarea2 = container.querySelector('textarea');
+  const setValue2 = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+  setValue2.call(textarea2, '再问一次');
+  textarea2.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  container.querySelector('button[aria-label="Send"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  running = true;
+  render();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(ttsBodies.length, before, 'nothing is spoken before any text exists');
+
+  /* A completed sentence, one token at a time. */
+  eventSource.pushLive('第一句话。');
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(ttsBodies.length, before + 1, 'a completed sentence is spoken at once');
+  assert.equal(ttsBodies.at(-1).text, '第一句话。');
+
+  /* A fragment waits for its sentence to finish. */
+  eventSource.pushLive('第二句还没');
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(ttsBodies.length, before + 1, 'an unfinished sentence is not spoken');
+
+  eventSource.pushLive('说完。');
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(ttsBodies.at(-1).text, '第二句还没说完。', 'the rest of the sentence joins it');
+
+  replyText = '第一句话。第二句还没说完。';
+  eventSource.finish(replyText);
+  running = false;
+  render();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.ok(
+    ttsBodies.every((body) => body.text !== replyText),
+    'a streamed reply is not spoken again at the end',
+  );
+}
 
 root.unmount();
 console.log('reply.test.mjs: ok');
