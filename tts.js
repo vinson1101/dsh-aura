@@ -127,13 +127,54 @@ export async function assemblePcm(textChunks) {
 }
 
 /**
+ * Split a reply into speakable segments, ported from the bridge
+ * (`server.py: _tts_text_segments`): 60 characters per segment, split on
+ * Chinese and Latin sentence punctuation plus newlines, and a hard split for a
+ * run that has no punctuation at all.
+ *
+ * Short segments are what make playback start early: the provider streams audio
+ * per segment, so the first one is heard while the rest are still being made.
+ */
+export function textSegments(text, maxChars = 60) {
+  const single = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!single) return ['我没听清。'];
+  const limit = maxChars > 0 ? maxChars : 60;
+  const parts = single.split(/([。！？!?；;，,\n])/);
+  const segments = [];
+  let current = '';
+  for (let index = 0; index < parts.length; index += 2) {
+    const piece = parts[index] || '';
+    const punct = index + 1 < parts.length ? parts[index + 1] || '' : '';
+    const token = (piece + punct).trim();
+    if (!token) continue;
+    if (current && current.length + token.length > limit) {
+      pushLong(segments, current, limit);
+      current = token;
+    } else {
+      current += token;
+    }
+  }
+  if (current) pushLong(segments, current, limit);
+  return segments.length > 0 ? segments : ['我没听清。'];
+}
+
+function pushLong(segments, text, limit) {
+  let rest = text.trim();
+  while (rest.length > limit) {
+    segments.push(rest.slice(0, limit));
+    rest = rest.slice(limit);
+  }
+  if (rest) segments.push(rest);
+}
+
+/**
  * Cut text down to what can be synthesised inside the timeout.
  *
  * Measured against the provider: about 0.12 s of synthesis per character, so
  * 320 characters already exceed a 30 s budget. Prefer a sentence boundary near
  * the limit; fall back to a hard cut.
  */
-export function speakablePrefix(text, maxChars = 140) {
+export function speakablePrefix(text, maxChars = 240) {
   const whole = String(text || '').trim();
   if (whole.length <= maxChars) return { spoken: whole, truncated: false };
   const head = whole.slice(0, maxChars);

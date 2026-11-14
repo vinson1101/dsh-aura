@@ -170,3 +170,25 @@ console.log('tts.test.mjs: ok');
   assert.ok(cut.spoken.length <= 140, 'and stays inside the budget');
   assert.ok(cut.spoken.endsWith('。'), 'cutting prefers a sentence boundary');
 }
+
+/* ---- segmentation follows the bridge's rules --------------------------- */
+
+{
+  const { textSegments } = await import('../tts.js');
+
+  /* The bridge packs sentences up to 60 characters, then starts a new segment;
+   * it does not emit one sentence per segment. */
+  const text = '第一句。第二句！第三句？'
+    + '后面还有很长的一段话没有任何标点符号需要硬切分才行真的超过六十个字符了所以会被切开成两段'
+    + '而且还要再长一点才能确保超过六十个字符的上限并触发硬切分这里的字数已经足够多了吧';
+  const segments = textSegments(text);
+  assert.ok(segments.length >= 2, 'a long reply becomes several segments');
+  assert.ok(segments.every((part) => part.length <= 60), 'no segment exceeds 60 characters');
+  assert.equal(segments.join(''), text, 'nothing is lost or duplicated');
+
+  /* A short sentence is packed with its neighbour rather than split off. */
+  assert.deepEqual(textSegments('第一句。第二句。'), ['第一句。第二句。']);
+
+  /* Empty input still yields something to say. */
+  assert.deepEqual(textSegments('   '), ['我没听清。']);
+}

@@ -21,7 +21,7 @@ import { createAsr, openParaformerSession, withAllocationRetry } from './asr.js'
 import { WebSocketServer } from 'ws';
 import { randomUUID } from 'node:crypto';
 import { createKeyReader } from './secrets.js';
-import { createTts } from './tts.js';
+import { createTts, speakablePrefix, textSegments } from './tts.js';
 
 export const inject = ['webServer'];
 
@@ -406,17 +406,23 @@ export function apply(ctx, config = {}) {
               'x-aura-sample-rate': String(16000),
               'x-aura-provider': tts.name,
             });
-            await tts.stream({
-              text,
-              voice,
-              onChunk: (chunk) => {
-                try {
-                  res.write(chunk);
-                } catch {
-                  /* the client went away; the stream ends on its own */
-                }
-              },
-            });
+            /* Segment first, synthesise each, write as it arrives: the bridge's
+             * shape (server.py: _tts_messages + _write_tts_audio_stream). */
+            const { spoken } = speakablePrefix(text, 240);
+            const segments = textSegments(spoken, 60);
+            for (const segment of segments) {
+              await tts.stream({
+                text: segment,
+                voice,
+                onChunk: (chunk) => {
+                  try {
+                    res.write(chunk);
+                  } catch {
+                    /* the client went away; the stream ends on its own */
+                  }
+                },
+              });
+            }
             res.end();
           } catch (failure) {
             if (!res.headersSent) {
