@@ -45,6 +45,14 @@ window.Element.prototype.getBoundingClientRect = () => ({
   x: 0, y: 0, top: 0, left: 0, right: BOX.width, bottom: BOX.height,
   width: BOX.width, height: BOX.height,
 });
+/* jsdom lays nothing out, so scrollHeight is 0 and the composer could never
+ * look taller than one row. Report a height that grows with the text. */
+Object.defineProperty(window.HTMLTextAreaElement.prototype, 'scrollHeight', {
+  get() {
+    return Math.max(34, 20 + String(this.value || '').length);
+  },
+  configurable: true,
+});
 window.matchMedia = (query) => ({
   matches: false,
   media: query,
@@ -181,6 +189,27 @@ assert.equal(canvas.style.height, canvas.style.width, 'both CSS sides must match
 assert.ok(painted.clear > 0, 'the form must paint at least one frame');
 assert.ok(painted.fill > 0, 'the form must fill its depth groups');
 assert.ok(container.querySelector('textarea'), 'the pane must carry its composer');
+
+/* ---- the composer grows instead of clipping the second line ------------- */
+
+const textarea = container.querySelector('textarea');
+assert.ok(textarea, 'the pane must carry its composer');
+assert.equal(textarea.style.height, '34px', 'an empty composer sits at its floor');
+
+const setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+const type = (value) => {
+  setValue.call(textarea, value);
+  textarea.dispatchEvent(new window.Event('input', { bubbles: true }));
+};
+type('a'.repeat(200));
+await new Promise((resolve) => setTimeout(resolve, 20));
+assert.equal(textarea.style.height, '132px', 'a long draft grows to the cap');
+assert.equal(textarea.style.overflowY, 'auto', 'past the cap it scrolls');
+
+type('short');
+await new Promise((resolve) => setTimeout(resolve, 20));
+assert.equal(textarea.style.height, '34px', 'a short draft shrinks back to the floor');
+assert.equal(textarea.style.overflowY, 'hidden', 'no scrollbar when it fits');
 
 root.unmount();
 console.log('pane.test.mjs: ok');

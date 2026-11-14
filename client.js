@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
     /** Tab identity; `id` and `kind` are the same string on purpose. */
     const TAB_ID = 'dsh-aura';
 
-    const VERSION = '0.9.0';
+    const VERSION = '0.9.1';
 
     /** Set once the tab type, body and title are all registered. */
     const registrations = { ready: false };
@@ -392,10 +392,12 @@ registerProcessor('aura-capture', AuraCapture);`;
 
     const FOOTER = { display: 'grid', gap: 6 };
     const ROW = { display: 'flex', gap: 6, alignItems: 'flex-end' };
+    /** The composer's tallest state before it scrolls instead of growing. */
+    const MAX_DRAFT_HEIGHT = 132;
     const INPUT = {
       flex: 1,
       minHeight: 34,
-      maxHeight: 120,
+      maxHeight: 132,
       resize: 'none',
       padding: '7px 9px',
       borderRadius: 8,
@@ -534,6 +536,19 @@ registerProcessor('aura-capture', AuraCapture);`;
       }, [phase]);
 
       const [draft, setDraft] = React.useState('');
+      const draftRef = React.useRef(null);
+
+      /* A one-row textarea clips the second line instead of growing, which is
+       * what pushed the last words under the box edge. Measure after every
+       * change and let the row take the height, up to MAX_DRAFT_HEIGHT. */
+      React.useEffect(() => {
+        const element = draftRef.current;
+        if (!element) return;
+        element.style.height = 'auto';
+        const height = Math.min(element.scrollHeight, MAX_DRAFT_HEIGHT);
+        element.style.height = height + 'px';
+        element.style.overflowY = element.scrollHeight > MAX_DRAFT_HEIGHT ? 'auto' : 'hidden';
+      }, [draft]);
       const [busy, setBusy] = React.useState(false);
       const [error, setError] = React.useState(null);
       const [listening, setListening] = React.useState(false);
@@ -737,6 +752,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             'div',
             { style: ROW },
             h('textarea', {
+              ref: draftRef,
               style: INPUT,
               value: draft,
               rows: 1,
