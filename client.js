@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.21.3';
+const AURA_VERSION = '0.21.4';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1061,7 +1061,26 @@ registerProcessor('aura-capture', AuraCapture);`;
       const partialRef = React.useRef({ text: '', at: 0 });
       const voiceRef = React.useRef(null);
       const levelRef = React.useRef(0);
-      const speakNext = React.useRef(false);
+      /* Survives a reload: shipping a new bundle reloads the page mid-run, and
+       * the reply of that run must still be spoken by the new instance. */
+      const SPEAK_KEY = 'dsh-aura.speak-next';
+      const readArmed = () => {
+        try {
+          return window.sessionStorage.getItem(SPEAK_KEY) === '1';
+        } catch {
+          return false;
+        }
+      };
+      const armSpeak = (armed) => {
+        speakNext.current = armed;
+        try {
+          if (armed) window.sessionStorage.setItem(SPEAK_KEY, '1');
+          else window.sessionStorage.removeItem(SPEAK_KEY);
+        } catch {
+          /* private mode still works within this page */
+        }
+      };
+      const speakNext = React.useRef(readArmed());
 
       /** Stop playback and let the sphere settle. */
       const stopSpeaking = React.useCallback(() => {
@@ -1232,7 +1251,7 @@ registerProcessor('aura-capture', AuraCapture);`;
           setSettledAt(Date.now() + SETTLED_MS);
           /* A run we started ends here: read its reply and speak it. */
           if (speakNext.current) {
-            speakNext.current = false;
+            armSpeak(false);
             const reply = lastAssistantText(props.sessionId);
           diag('reply_ready', { chars: reply.length });
           if (reply) void speak(reply);
@@ -1259,7 +1278,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               setError((result.error && result.error.message) || 'The session refused the message.');
               return false;
             }
-            speakNext.current = true;
+            armSpeak(true);
             diag('speak_armed', { chars: trimmed.length });
             return true;
           } catch (failure) {
