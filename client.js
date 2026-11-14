@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.19.4';
+const AURA_VERSION = '0.19.5';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -565,8 +565,8 @@ registerProcessor('aura-capture', AuraCapture);`;
         background: transparent; color: inherit; font: inherit; font-size: 14px; line-height: 1;
         opacity: .45; cursor: pointer; }
       .aura-close:hover { opacity: 1; background: rgba(127,127,127,.16); }
-      .aura-id img, .aura-id .aura-ava-fallback { width: 40px; height: 40px; font-size: 16px; }
-      .aura-name { font-size: 14px; font-weight: 600; letter-spacing: .01em; }
+      .aura-id img, .aura-id .aura-ava-fallback { width: 46px; height: 46px; font-size: 18px; }
+      .aura-name { font-size: 15px; font-weight: 600; letter-spacing: .01em; }
       .aura-sub { font-size: 11px; color: var(--dsw-alias-label-tertiary, inherit); opacity: .8; margin-top: 2px; }
       .aura-rule { height: 1px; background: rgba(255,255,255,.1); margin: 0 -4px; }
       .aura-cap { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--dsw-alias-label-tertiary, inherit); opacity: .7; margin-bottom: 6px; }
@@ -574,15 +574,15 @@ registerProcessor('aura-capture', AuraCapture);`;
       .aura-row:hover { background: rgba(255,255,255,.07); }
       .aura-dot { width: 8px; height: 8px; border-radius: 999px; border: 1px solid rgba(127,127,127,.55); flex: 0 0 auto; }
       .aura-row[data-on='true'] .aura-dot { border-color: #7ec8ff; background: #7ec8ff; box-shadow: 0 0 8px #7ec8ff88; }
-      .aura-label { flex: 1; min-width: 0; font-size: 12px; line-height: 1.3; }
+      .aura-label { flex: 1; min-width: 0; font-size: 13px; line-height: 1.35; }
       .aura-id-mono { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; opacity: .42; display: block; }
       .aura-act { height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,.16);
-        background: transparent; color: inherit; font: inherit; font-size: 11px; cursor: pointer;
+        background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer;
         opacity: .55; transition: opacity .15s ease, background .15s ease; white-space: nowrap; }
       .aura-row:hover .aura-act, .aura-act:focus-visible { opacity: 1; }
       .aura-act:hover { background: rgba(127,127,127,.18); }
       .aura-act:disabled { opacity: .25; cursor: default; }
-      .aura-field { flex: 1; min-width: 0; height: 24px; padding: 0 8px; border-radius: 7px;
+      .aura-field { flex: 1; min-width: 0; height: 28px; padding: 0 9px; border-radius: 8px;
         border: 1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.3));
         background: var(--dsw-alias-bg-layer-2, transparent); color: inherit; font: inherit; font-size: 11px; }
       .aura-field:focus { outline: none; border-color: rgba(126,200,255,.65); }
@@ -695,7 +695,7 @@ registerProcessor('aura-capture', AuraCapture);`;
     const MAX_DRAFT_HEIGHT = 132;
     const INPUT = {
       flex: 1,
-      minHeight: 40,
+      minHeight: 42,
       maxHeight: 132,
       resize: 'none',
       padding: '7px 9px',
@@ -708,19 +708,21 @@ registerProcessor('aura-capture', AuraCapture);`;
       lineHeight: 1.4,
       boxSizing: 'border-box',
     };
+    /* Derived from the reference card: the label is about 53% of the control
+     * height, the icon about 45%, and the corner radius about 30%. */
     const BUTTON = {
       flex: '0 0 auto',
-      minWidth: 38,
-      height: 40,
-      padding: '0 12px',
+      minWidth: 44,
+      height: 42,
+      padding: '0 16px',
       display: 'grid',
       placeItems: 'center',
-      borderRadius: 8,
+      borderRadius: 11,
       border: '1px solid var(--dsw-alias-border-base, rgba(127,127,127,.35))',
       background: 'transparent',
       color: 'inherit',
       font: 'inherit',
-      fontSize: 15,
+      fontSize: 17,
       cursor: 'pointer',
     };
     const BUTTON_ACTIVE = {
