@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.19.8';
+const AURA_VERSION = '0.20.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -505,6 +505,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       padding: 16,
       boxSizing: 'border-box',
       position: 'relative',
+      containerType: 'inline-size',
     };
     /* The stage only centres; the form squares the canvas inside it. */
     const HEADER = {
@@ -562,7 +563,8 @@ registerProcessor('aura-capture', AuraCapture);`;
       /* Same ingredients as the chip above it: a neutral colour, an alpha, and
        * a blur. The theme's surface tokens are opaque, which is why the card
        * stayed dark while the chip looked like glass. */
-      .aura-card { position: absolute; top: 74px; right: 8px; width: 276px; padding: 14px;
+      .aura-card { position: absolute; top: 74px; right: 8px; width: 276px;
+      max-width: calc(100% - 16px); padding: 14px;
       max-height: calc(100% - 82px); overflow-y: auto; overscroll-behavior: contain;
       display: grid; gap: 12px; border-radius: 14px;
       border: 1px solid rgba(160, 170, 190, .22);
@@ -601,6 +603,17 @@ registerProcessor('aura-capture', AuraCapture);`;
       .aura-foot button { height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid rgba(127,127,127,.3);
         background: transparent; color: inherit; font: inherit; font-size: 11px; cursor: pointer; }
       .aura-foot button:hover { background: rgba(127,127,127,.16); }
+      /* Below these widths the parts stop fitting side by side. Drop the words
+       * that repeat what the glyph already says, and keep every control. */
+      @container (max-width: 260px) {
+        .aura-chip-text { display: none; }
+        .aura-btn-text { display: none; }
+      }
+      @container (max-width: 200px) {
+        .aura-ava, .aura-ava-fallback { width: 34px; height: 34px; font-size: 15px; }
+        .aura-top { min-height: 42px; }
+        .aura-card { top: 56px; max-height: calc(100% - 64px); padding: 10px; }
+      }
     `;
 
     const PROFILE = {
@@ -701,7 +714,7 @@ registerProcessor('aura-capture', AuraCapture);`;
     };
 
     const FOOTER = { display: 'grid', gap: 6 };
-    const ROW = { display: 'flex', gap: 6, alignItems: 'flex-end' };
+    const ROW = { display: 'flex', gap: 6, alignItems: 'flex-end', flexWrap: 'wrap' };
     /** The composer's tallest state before it scrolls instead of growing. */
     const MAX_DRAFT_HEIGHT = 132;
     const INPUT = {
@@ -723,6 +736,10 @@ registerProcessor('aura-capture', AuraCapture);`;
      * height, the icon about 45%, and the corner radius about 30%. */
     const BUTTON = {
       flex: '0 0 auto',
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
       minWidth: 44,
       height: 42,
       padding: '0 16px',
@@ -1453,7 +1470,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             prefs.avatar
               ? h('img', { className: 'aura-ava', src: prefs.avatar, alt: '' })
               : h('span', { className: 'aura-ava-fallback' }, 'A'),
-            h('span', null, 'Aura'),
+            h('span', { className: 'aura-chip-text' }, 'Aura'),
           ),
         ),
         panelOpen
@@ -1634,7 +1651,8 @@ registerProcessor('aura-capture', AuraCapture);`;
                 'aria-label': listening ? 'Stop listening' : 'Start listening',
                 onClick: toggleMic,
               },
-              listening ? '● 在听' : '🎙 说话',
+              h('span', null, listening ? '●' : '🎙'),
+            h('span', { className: 'aura-btn-text' }, listening ? '在听' : '说话'),
             ),
             h(
               'button',
