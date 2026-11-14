@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.18.6';
+const AURA_VERSION = '0.18.7';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -552,13 +552,19 @@ registerProcessor('aura-capture', AuraCapture);`;
        * card must stay clickable while it is open. */
       /* The theme already owns the popover surface and its glass treatment;
        * inventing a translucency here fought the wallpaper and the theme. */
+      /* Self-contained glass: the plugin decides its own translucency, so it
+       * looks the same in a bare profile as in a decorated one. The theme
+       * colour is used only as the tint; the alpha is ours. */
       .aura-card { position: absolute; top: 48px; right: 8px; width: 276px; padding: 14px;
         max-height: calc(100% - 56px); overflow-y: auto; overscroll-behavior: contain;
         display: grid; gap: 12px; border-radius: 14px;
-        background: var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-1, #191b21));
-        border: 1px solid var(--dsw-alias-border-l1, rgba(255,255,255,.12));
-        backdrop-filter: blur(18px) saturate(1.4);
-        box-shadow: 0 18px 44px rgba(0,0,0,.34); z-index: 6; }
+        background: rgba(22, 24, 30, .62);
+        background: color-mix(in srgb, var(--dsw-alias-bg-layer-1, #191b21) 62%, transparent);
+        border: 1px solid rgba(255, 255, 255, .14);
+        backdrop-filter: blur(22px) saturate(150%);
+        -webkit-backdrop-filter: blur(22px) saturate(150%);
+        box-shadow: 0 20px 48px rgba(0, 0, 0, .38), inset 0 1px 0 rgba(255, 255, 255, .08);
+        z-index: 6; }
       .aura-id { display: flex; align-items: center; gap: 10px; }
       .aura-close { margin-left: auto; width: 24px; height: 24px; border-radius: 999px; border: none;
         background: transparent; color: inherit; font: inherit; font-size: 14px; line-height: 1;
@@ -567,15 +573,15 @@ registerProcessor('aura-capture', AuraCapture);`;
       .aura-id img, .aura-id .aura-ava-fallback { width: 40px; height: 40px; font-size: 16px; }
       .aura-name { font-size: 14px; font-weight: 600; letter-spacing: .01em; }
       .aura-sub { font-size: 11px; color: var(--dsw-alias-label-tertiary, inherit); opacity: .8; margin-top: 2px; }
-      .aura-rule { height: 1px; background: var(--dsw-alias-border-l1, rgba(127,127,127,.18)); margin: 0 -4px; }
+      .aura-rule { height: 1px; background: rgba(255,255,255,.1); margin: 0 -4px; }
       .aura-cap { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--dsw-alias-label-tertiary, inherit); opacity: .7; margin-bottom: 6px; }
       .aura-row { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 8px; }
-      .aura-row:hover { background: var(--dsw-alias-bg-layer-2, rgba(127,127,127,.12)); }
+      .aura-row:hover { background: rgba(255,255,255,.07); }
       .aura-dot { width: 8px; height: 8px; border-radius: 999px; border: 1px solid rgba(127,127,127,.55); flex: 0 0 auto; }
       .aura-row[data-on='true'] .aura-dot { border-color: #7ec8ff; background: #7ec8ff; box-shadow: 0 0 8px #7ec8ff88; }
       .aura-label { flex: 1; min-width: 0; font-size: 12px; line-height: 1.3; }
       .aura-id-mono { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; opacity: .42; display: block; }
-      .aura-act { height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.34));
+      .aura-act { height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,.16);
         background: transparent; color: inherit; font: inherit; font-size: 11px; cursor: pointer;
         opacity: .55; transition: opacity .15s ease, background .15s ease; white-space: nowrap; }
       .aura-row:hover .aura-act, .aura-act:focus-visible { opacity: 1; }
