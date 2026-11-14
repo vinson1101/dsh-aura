@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.18.5';
+const AURA_VERSION = '0.18.6';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -550,12 +550,14 @@ registerProcessor('aura-capture', AuraCapture);`;
         font-size: 11px; font-weight: 600; color: #cfe4ff; background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
       /* Starts below the chip, never on top of it: the control that opens the
        * card must stay clickable while it is open. */
+      /* The theme already owns the popover surface and its glass treatment;
+       * inventing a translucency here fought the wallpaper and the theme. */
       .aura-card { position: absolute; top: 48px; right: 8px; width: 276px; padding: 14px;
         max-height: calc(100% - 56px); overflow-y: auto; overscroll-behavior: contain;
         display: grid; gap: 12px; border-radius: 14px;
-        border: 1px solid rgba(255,255,255,.1);
-        background: color-mix(in srgb, var(--dsw-alias-bg-base, #191b21) 68%, transparent);
-        backdrop-filter: blur(16px) saturate(1.35);
+        background: var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-1, #191b21));
+        border: 1px solid var(--dsw-alias-border-l1, rgba(255,255,255,.12));
+        backdrop-filter: blur(18px) saturate(1.4);
         box-shadow: 0 18px 44px rgba(0,0,0,.34); z-index: 6; }
       .aura-id { display: flex; align-items: center; gap: 10px; }
       .aura-close { margin-left: auto; width: 24px; height: 24px; border-radius: 999px; border: none;
@@ -564,23 +566,24 @@ registerProcessor('aura-capture', AuraCapture);`;
       .aura-close:hover { opacity: 1; background: rgba(127,127,127,.16); }
       .aura-id img, .aura-id .aura-ava-fallback { width: 40px; height: 40px; font-size: 16px; }
       .aura-name { font-size: 14px; font-weight: 600; letter-spacing: .01em; }
-      .aura-sub { font-size: 11px; opacity: .5; margin-top: 2px; }
-      .aura-rule { height: 1px; background: rgba(127,127,127,.18); margin: 0 -4px; }
-      .aura-cap { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; opacity: .45; margin-bottom: 6px; }
+      .aura-sub { font-size: 11px; color: var(--dsw-alias-label-tertiary, inherit); opacity: .8; margin-top: 2px; }
+      .aura-rule { height: 1px; background: var(--dsw-alias-border-l1, rgba(127,127,127,.18)); margin: 0 -4px; }
+      .aura-cap { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--dsw-alias-label-tertiary, inherit); opacity: .7; margin-bottom: 6px; }
       .aura-row { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 8px; }
-      .aura-row:hover { background: rgba(127,127,127,.12); }
+      .aura-row:hover { background: var(--dsw-alias-bg-layer-2, rgba(127,127,127,.12)); }
       .aura-dot { width: 8px; height: 8px; border-radius: 999px; border: 1px solid rgba(127,127,127,.55); flex: 0 0 auto; }
       .aura-row[data-on='true'] .aura-dot { border-color: #7ec8ff; background: #7ec8ff; box-shadow: 0 0 8px #7ec8ff88; }
       .aura-label { flex: 1; min-width: 0; font-size: 12px; line-height: 1.3; }
       .aura-id-mono { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; opacity: .42; display: block; }
-      .aura-act { height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid rgba(127,127,127,.34);
+      .aura-act { height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.34));
         background: transparent; color: inherit; font: inherit; font-size: 11px; cursor: pointer;
         opacity: .55; transition: opacity .15s ease, background .15s ease; white-space: nowrap; }
       .aura-row:hover .aura-act, .aura-act:focus-visible { opacity: 1; }
       .aura-act:hover { background: rgba(127,127,127,.18); }
       .aura-act:disabled { opacity: .25; cursor: default; }
       .aura-field { flex: 1; min-width: 0; height: 24px; padding: 0 8px; border-radius: 7px;
-        border: 1px solid rgba(127,127,127,.3); background: transparent; color: inherit; font: inherit; font-size: 11px; }
+        border: 1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.3));
+        background: var(--dsw-alias-bg-layer-2, transparent); color: inherit; font: inherit; font-size: 11px; }
       .aura-field:focus { outline: none; border-color: rgba(126,200,255,.65); }
       .aura-foot { display: flex; align-items: center; justify-content: space-between; font-size: 11px; opacity: .6; }
       .aura-foot button { height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid rgba(127,127,127,.3);
