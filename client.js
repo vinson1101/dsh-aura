@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.17.1';
+const AURA_VERSION = '0.18.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -548,11 +548,19 @@ registerProcessor('aura-capture', AuraCapture);`;
         background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
       .aura-ava-fallback { width: 22px; height: 22px; border-radius: 999px; display: grid; place-items: center;
         font-size: 11px; font-weight: 600; color: #cfe4ff; background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
-      .aura-card { position: absolute; top: 34px; right: 8px; width: 276px; padding: 14px;
-        max-height: calc(100% - 42px); overflow-y: auto; overscroll-behavior: contain;
-        display: grid; gap: 12px; border-radius: 14px; border: 1px solid rgba(127,127,127,.24);
-        background: var(--dsw-alias-bg-base, #191b21); box-shadow: 0 18px 44px rgba(0,0,0,.34); z-index: 6; }
+      /* Open the card and it owns the pane: no half-covered controls to hunt for. */
+      .aura-veil { position: absolute; inset: 0; z-index: 6; display: flex; justify-content: center;
+        align-items: flex-start; padding: 10px; background: rgba(8,10,14,.55); backdrop-filter: blur(3px);
+        animation: aura-fade .14s ease-out; }
+      @keyframes aura-fade { from { opacity: 0 } to { opacity: 1 } }
+      .aura-card { width: 100%; max-width: 320px; max-height: 100%; overflow-y: auto; overscroll-behavior: contain;
+        padding: 14px; display: grid; gap: 12px; border-radius: 14px; border: 1px solid rgba(127,127,127,.24);
+        background: var(--dsw-alias-bg-base, #191b21); box-shadow: 0 18px 44px rgba(0,0,0,.45); }
       .aura-id { display: flex; align-items: center; gap: 10px; }
+      .aura-close { margin-left: auto; width: 24px; height: 24px; border-radius: 999px; border: none;
+        background: transparent; color: inherit; font: inherit; font-size: 14px; line-height: 1;
+        opacity: .45; cursor: pointer; }
+      .aura-close:hover { opacity: 1; background: rgba(127,127,127,.16); }
       .aura-id img, .aura-id .aura-ava-fallback { width: 40px; height: 40px; font-size: 16px; }
       .aura-name { font-size: 14px; font-weight: 600; letter-spacing: .01em; }
       .aura-sub { font-size: 11px; opacity: .5; margin-top: 2px; }
@@ -1363,6 +1371,9 @@ registerProcessor('aura-capture', AuraCapture);`;
         panelOpen
           ? h(
               'div',
+              { className: 'aura-veil' },
+              h(
+              'div',
               { className: 'aura-card', ref: cardRef, role: 'dialog', 'aria-label': 'Aura' },
               h(
                 'div',
@@ -1375,6 +1386,17 @@ registerProcessor('aura-capture', AuraCapture);`;
                   null,
                   h('div', { className: 'aura-name' }, 'Aura'),
                   h('div', { className: 'aura-sub' }, `v${AURA_VERSION} · ${phase}`),
+                ),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'aura-close',
+                    title: 'Close',
+                    'aria-label': 'Close Aura profile',
+                    onClick: () => setPanelOpen(false),
+                  },
+                  '✕',
                 ),
               ),
               h('div', { className: 'aura-rule' }),
@@ -1489,6 +1511,7 @@ registerProcessor('aura-capture', AuraCapture);`;
                   },
                   '⟳ 刷新',
                 ),
+              ),
               ),
             )
           : null,

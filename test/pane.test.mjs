@@ -180,6 +180,13 @@ assert.ok(
   'the reload control must be inside the card',
 );
 
+/* The open card owns the pane and says so with its own close control. */
+assert.ok(
+  container.querySelector('button[aria-label="Close Aura profile"]'),
+  'the open card must carry a close control',
+);
+assert.ok(container.querySelector('.aura-veil'), 'the card must cover the pane while open');
+
 /* A popover you can only close by finding an uncovered spot is a trap. */
 window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 await new Promise((resolve) => setTimeout(resolve, 20));
