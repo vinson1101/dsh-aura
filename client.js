@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.18.4';
+const AURA_VERSION = '0.18.5';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -548,10 +548,15 @@ registerProcessor('aura-capture', AuraCapture);`;
         background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
       .aura-ava-fallback { width: 22px; height: 22px; border-radius: 999px; display: grid; place-items: center;
         font-size: 11px; font-weight: 600; color: #cfe4ff; background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
-      .aura-card { position: absolute; top: 34px; right: 8px; width: 276px; padding: 14px;
-        max-height: calc(100% - 42px); overflow-y: auto; overscroll-behavior: contain;
-        display: grid; gap: 12px; border-radius: 14px; border: 1px solid rgba(127,127,127,.24);
-        background: var(--dsw-alias-bg-base, #191b21); box-shadow: 0 18px 44px rgba(0,0,0,.34); z-index: 6; }
+      /* Starts below the chip, never on top of it: the control that opens the
+       * card must stay clickable while it is open. */
+      .aura-card { position: absolute; top: 48px; right: 8px; width: 276px; padding: 14px;
+        max-height: calc(100% - 56px); overflow-y: auto; overscroll-behavior: contain;
+        display: grid; gap: 12px; border-radius: 14px;
+        border: 1px solid rgba(255,255,255,.1);
+        background: color-mix(in srgb, var(--dsw-alias-bg-base, #191b21) 68%, transparent);
+        backdrop-filter: blur(16px) saturate(1.35);
+        box-shadow: 0 18px 44px rgba(0,0,0,.34); z-index: 6; }
       .aura-id { display: flex; align-items: center; gap: 10px; }
       .aura-close { margin-left: auto; width: 24px; height: 24px; border-radius: 999px; border: none;
         background: transparent; color: inherit; font: inherit; font-size: 14px; line-height: 1;
