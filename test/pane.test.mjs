@@ -165,16 +165,19 @@ assert.ok(
 );
 assert.equal(pane.component.name, 'AuraPane');
 
-/* The running version must be readable without hovering: a stale page and a
- * broken feature look identical otherwise. */
-assert.match(container.textContent, /v\d+\.\d+\.\d+/, 'the pane must show its version');
+/* The version and the reload control live inside the profile card; a stale
+ * page and a broken feature look identical without them. */
+const profile = container.querySelector('button[aria-label="Aura profile"]');
+assert.ok(profile, 'the profile control must be in the header');
+
+/* The card is closed by default, so the version cannot be read from a bare
+ * render — open it the way a user would. */
+profile.click();
+await new Promise((resolve) => setTimeout(resolve, 20));
+assert.match(container.textContent, /v\d+\.\d+\.\d+/, 'the card must name the running version');
 assert.ok(
   container.querySelector('button[aria-label="Force reload"]'),
-  'the reload control must sit beside the version',
-);
-assert.ok(
-  container.querySelector('button[aria-label="Aura profile"]'),
-  'the profile control must be in the header',
+  'the reload control must be inside the card',
 );
 
 const canvas = container.querySelector('canvas');

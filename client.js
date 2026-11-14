@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.16.1';
+const AURA_VERSION = '0.17.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -537,6 +537,47 @@ registerProcessor('aura-capture', AuraCapture);`;
       lineHeight: 1,
       cursor: 'pointer',
     };
+    const STYLE = `
+      .aura-top { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-height: 26px; }
+      .aura-chip { display: inline-flex; align-items: center; gap: 7px; padding: 3px 9px 3px 3px;
+        border: 1px solid transparent; border-radius: 999px; background: transparent; color: inherit;
+        font: inherit; font-size: 12px; cursor: pointer; transition: background .15s ease, border-color .15s ease; }
+      .aura-chip:hover { background: rgba(127,127,127,.14); border-color: rgba(127,127,127,.22); }
+      .aura-chip[aria-expanded='true'] { background: rgba(127,127,127,.16); border-color: rgba(127,127,127,.28); }
+      .aura-ava { width: 22px; height: 22px; border-radius: 999px; object-fit: cover; display: block;
+        background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
+      .aura-ava-fallback { width: 22px; height: 22px; border-radius: 999px; display: grid; place-items: center;
+        font-size: 11px; font-weight: 600; color: #cfe4ff; background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
+      .aura-card { position: absolute; top: 34px; right: 8px; width: 276px; padding: 14px;
+        display: grid; gap: 12px; border-radius: 14px; border: 1px solid rgba(127,127,127,.24);
+        background: var(--dsw-alias-bg-base, #191b21); box-shadow: 0 18px 44px rgba(0,0,0,.34); z-index: 6; }
+      .aura-id { display: flex; align-items: center; gap: 10px; }
+      .aura-id img, .aura-id .aura-ava-fallback { width: 40px; height: 40px; font-size: 16px; }
+      .aura-name { font-size: 14px; font-weight: 600; letter-spacing: .01em; }
+      .aura-sub { font-size: 11px; opacity: .5; margin-top: 2px; }
+      .aura-rule { height: 1px; background: rgba(127,127,127,.18); margin: 0 -4px; }
+      .aura-cap { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; opacity: .45; margin-bottom: 6px; }
+      .aura-row { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 8px; }
+      .aura-row:hover { background: rgba(127,127,127,.12); }
+      .aura-dot { width: 8px; height: 8px; border-radius: 999px; border: 1px solid rgba(127,127,127,.55); flex: 0 0 auto; }
+      .aura-row[data-on='true'] .aura-dot { border-color: #7ec8ff; background: #7ec8ff; box-shadow: 0 0 8px #7ec8ff88; }
+      .aura-label { flex: 1; min-width: 0; font-size: 12px; line-height: 1.3; }
+      .aura-id-mono { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; opacity: .42; display: block; }
+      .aura-act { height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid rgba(127,127,127,.34);
+        background: transparent; color: inherit; font: inherit; font-size: 11px; cursor: pointer;
+        opacity: .55; transition: opacity .15s ease, background .15s ease; white-space: nowrap; }
+      .aura-row:hover .aura-act, .aura-act:focus-visible { opacity: 1; }
+      .aura-act:hover { background: rgba(127,127,127,.18); }
+      .aura-act:disabled { opacity: .25; cursor: default; }
+      .aura-field { flex: 1; min-width: 0; height: 24px; padding: 0 8px; border-radius: 7px;
+        border: 1px solid rgba(127,127,127,.3); background: transparent; color: inherit; font: inherit; font-size: 11px; }
+      .aura-field:focus { outline: none; border-color: rgba(126,200,255,.65); }
+      .aura-foot { display: flex; align-items: center; justify-content: space-between; font-size: 11px; opacity: .6; }
+      .aura-foot button { height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid rgba(127,127,127,.3);
+        background: transparent; color: inherit; font: inherit; font-size: 11px; cursor: pointer; }
+      .aura-foot button:hover { background: rgba(127,127,127,.16); }
+    `;
+
     const PROFILE = {
       display: 'inline-flex',
       alignItems: 'center',
@@ -1277,117 +1318,154 @@ registerProcessor('aura-capture', AuraCapture);`;
       return h(
         'div',
         { style: PANE, 'data-aura-phase': phase },
+        h('style', null, STYLE),
         h(
           'div',
-          { style: HEADER },
-          h('span', { style: VERSION_LABEL, title: 'dsh-aura version' }, `v${AURA_VERSION}`),
+          { className: 'aura-top' },
           h(
             'button',
             {
               type: 'button',
-              style: RELOAD,
-              title: `Force reload · installed build may be newer than v${AURA_VERSION}`,
-              'aria-label': 'Force reload',
-              onClick: () => window.location.reload(),
-            },
-            '⟳',
-          ),
-          h(
-            'button',
-            {
-              type: 'button',
-              style: PROFILE,
-              title: 'Voice and avatar',
+              className: 'aura-chip',
+              title: 'Aura',
               'aria-label': 'Aura profile',
               'aria-expanded': String(panelOpen),
               onClick: () => setPanelOpen((open) => !open),
             },
             prefs.avatar
-              ? h('img', { src: prefs.avatar, style: AVATAR, alt: '' })
-              : h('span', { style: AVATAR_FALLBACK }, 'A'),
+              ? h('img', { className: 'aura-ava', src: prefs.avatar, alt: '' })
+              : h('span', { className: 'aura-ava-fallback' }, 'A'),
             h('span', null, 'Aura'),
           ),
         ),
         panelOpen
           ? h(
               'div',
-              { style: PANEL_CARD },
-              h('div', { style: PANEL_LABEL }, '头像'),
+              { className: 'aura-card' },
               h(
                 'div',
-                { style: PANEL_ROW },
-                h('input', {
-                  type: 'file',
-                  accept: 'image/*',
-                  'aria-label': 'Upload an avatar',
-                  style: { fontSize: 11, flex: 1, minWidth: 0 },
-                  onChange: (event) => {
-                    const file = event.target.files && event.target.files[0];
-                    if (file) pickAvatar(file);
-                  },
-                }),
+                { className: 'aura-id' },
                 prefs.avatar
-                  ? h(
-                      'button',
-                      { type: 'button', style: SMALL_BUTTON, onClick: () => choose({ avatar: '' }) },
-                      '清除',
-                    )
-                  : null,
-              ),
-              h('div', { style: PANEL_LABEL }, '声音'),
-              ...VOICES.map((voice) =>
+                  ? h('img', { src: prefs.avatar, alt: '' })
+                  : h('span', { className: 'aura-ava-fallback' }, 'A'),
                 h(
                   'div',
-                  { style: PANEL_ROW, key: voice.id },
+                  null,
+                  h('div', { className: 'aura-name' }, 'Aura'),
+                  h('div', { className: 'aura-sub' }, `v${AURA_VERSION} · ${phase}`),
+                ),
+              ),
+              h('div', { className: 'aura-rule' }),
+              h(
+                'div',
+                null,
+                h('div', { className: 'aura-cap' }, '声音'),
+                ...VOICES.map((voice) =>
                   h(
-                    'button',
+                    'div',
                     {
-                      type: 'button',
-                      style: SMALL_BUTTON,
-                      title: 'Use this voice',
-                      'aria-label': `Use ${voice.id}`,
+                      className: 'aura-row',
+                      key: voice.id,
+                      'data-on': String(prefs.voice === voice.id),
                       onClick: () => choose({ voice: voice.id }),
                     },
-                    prefs.voice === voice.id ? '●' : '○',
+                    h('span', { className: 'aura-dot' }),
+                    h(
+                      'span',
+                      { className: 'aura-label' },
+                      voice.label,
+                      h('span', { className: 'aura-id-mono' }, voice.id),
+                    ),
+                    h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'aura-act',
+                        title: `Preview ${voice.id}`,
+                        'aria-label': `Preview ${voice.id}`,
+                        onClick: (event) => {
+                          event.stopPropagation();
+                          void speak('你好，我是 Aura。现在可以听到我说话。', voice.id);
+                        },
+                      },
+                      '试听',
+                    ),
                   ),
-                  h('span', { style: { flex: 1, fontSize: 11 } }, voice.label),
+                ),
+                h(
+                  'div',
+                  { className: 'aura-row' },
+                  h('span', { className: 'aura-dot', style: { opacity: 0 } }),
+                  h('input', {
+                    className: 'aura-field',
+                    value: customVoice,
+                    placeholder: '自定义 voice id',
+                    'aria-label': 'Custom voice id',
+                    onChange: (event) => setCustomVoice(event.target.value),
+                    onKeyDown: (event) => {
+                      if (event.key === 'Enter' && /^[A-Za-z0-9_.-]{1,64}$/.test(customVoice.trim())) {
+                        choose({ voice: customVoice.trim() });
+                      }
+                    },
+                  }),
                   h(
                     'button',
                     {
                       type: 'button',
-                      style: SMALL_BUTTON,
-                      title: `Preview ${voice.id}`,
-                      'aria-label': `Preview ${voice.id}`,
-                      onClick: () => void speak('你好，我是 Aura。现在可以听到我说话。', voice.id),
+                      className: 'aura-act',
+                      disabled: !/^[A-Za-z0-9_.-]{1,64}$/.test(customVoice.trim()),
+                      onClick: () => choose({ voice: customVoice.trim() }),
                     },
-                    '试听',
+                    '使用',
                   ),
                 ),
               ),
+              h('div', { className: 'aura-rule' }),
               h(
                 'div',
-                { style: PANEL_ROW },
-                h('input', {
-                  style: SMALL_INPUT,
-                  value: customVoice,
-                  placeholder: '自定义 voice id',
-                  'aria-label': 'Custom voice id',
-                  onChange: (event) => setCustomVoice(event.target.value),
-                  onKeyDown: (event) => {
-                    if (event.key === 'Enter' && /^[A-Za-z0-9_.-]{1,64}$/.test(customVoice.trim())) {
-                      choose({ voice: customVoice.trim() });
-                    }
-                  },
-                }),
+                null,
+                h('div', { className: 'aura-cap' }, '头像'),
+                h(
+                  'div',
+                  { className: 'aura-row' },
+                  h('span', { className: 'aura-dot', style: { opacity: 0 } }),
+                  h('label', { className: 'aura-label', style: { cursor: 'pointer' } },
+                    '上传图片',
+                    h('span', { className: 'aura-id-mono' }, '自动裁成 128×128，只存本机'),
+                    h('input', {
+                      type: 'file',
+                      accept: 'image/*',
+                      'aria-label': 'Upload an avatar',
+                      style: { display: 'none' },
+                      onChange: (event) => {
+                        const file = event.target.files && event.target.files[0];
+                        if (file) pickAvatar(file);
+                      },
+                    }),
+                  ),
+                  prefs.avatar
+                    ? h(
+                        'button',
+                        { type: 'button', className: 'aura-act', onClick: () => choose({ avatar: '' }) },
+                        '清除',
+                      )
+                    : null,
+                ),
+              ),
+              h('div', { className: 'aura-rule' }),
+              h(
+                'div',
+                { className: 'aura-foot' },
+                h('span', null, `v${AURA_VERSION}`),
                 h(
                   'button',
                   {
                     type: 'button',
-                    style: SMALL_BUTTON,
-                    disabled: !/^[A-Za-z0-9_.-]{1,64}$/.test(customVoice.trim()),
-                    onClick: () => choose({ voice: customVoice.trim() }),
+                    title: 'Force reload',
+                    'aria-label': 'Force reload',
+                    onClick: () => window.location.reload(),
                   },
-                  '使用',
+                  '⟳ 刷新',
                 ),
               ),
             )
@@ -1400,7 +1478,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         h(
           'div',
           { style: CAPTION, title: heard || undefined },
-          listening ? 'listening' : transcribing ? 'transcribing' : heard || `${phase} · ${AURA_VERSION}`,
+          listening ? 'listening' : transcribing ? 'transcribing' : heard || phase,
         ),
         h(
           'div',
