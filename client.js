@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.20.6';
+const AURA_VERSION = '0.20.7';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -618,10 +618,19 @@ registerProcessor('aura-capture', AuraCapture);`;
       }
       @container (max-width: 240px) {
         .aura-chip-text { display: none; }
+        .aura-stack { flex-wrap: wrap; }
+        .aura-stack .aura-field { flex: 1 1 100%; }
+        .aura-stack .aura-act { margin-left: auto; }
       }
       /* Narrow card: a field and its button no longer fit side by side, and the
        * mono detail line is the first thing to give way. */
       @container (max-width: 340px) {
+        /* No room for a floating card: it becomes the pane's surface. */
+        .aura-card { left: 0; right: 0; width: auto; max-width: none;
+          border-radius: 0 0 14px 14px; padding: 12px; }
+        .aura-stack { flex-wrap: nowrap; }
+        .aura-stack .aura-field { flex: 1 1 0%; min-width: 0; }
+        .aura-stack .aura-act { margin-left: 0; flex: 0 0 auto; }
         .aura-card { padding: 10px; gap: 8px; }
         .aura-id-mono { display: none; }
         .aura-stack { flex-wrap: wrap; }
