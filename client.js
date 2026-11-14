@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.15.2';
+const AURA_VERSION = '0.15.3';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -400,6 +400,31 @@ window.__ModuleLoader__.load({
   }
 }
 registerProcessor('aura-capture', AuraCapture);`;
+
+    let cachedOrigin;
+    /**
+     * The console is served from `dsh-app://app/` inside the desktop app, so
+     * `location.host` is not the host. Ask the host for its origin once and
+     * build socket URLs from that.
+     */
+    async function hostOrigin() {
+      if (cachedOrigin) return cachedOrigin;
+      try {
+        const response = await fetch('/aura/version', { cache: 'no-store' });
+        const payload = await response.json();
+        if (typeof payload.origin === 'string' && payload.origin) {
+          cachedOrigin = payload.origin;
+          return cachedOrigin;
+        }
+      } catch {
+        /* fall through to the page origin */
+      }
+      if (typeof location !== 'undefined' && /^https?:/.test(location.origin)) {
+        cachedOrigin = location.origin;
+        return cachedOrigin;
+      }
+      return '';
+    }
 
     /** Decode base64 into bytes without spreading a huge array. */
     function fromBase64(text) {
@@ -968,8 +993,9 @@ registerProcessor('aura-capture', AuraCapture);`;
           const AudioCtor = window.AudioContext || window.webkitAudioContext;
           if (!AudioCtor) throw new Error('This browser exposes no Web Audio.');
 
-          const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-          const socket = new WebSocket(`${scheme}://${location.host}/aura/asr/live`);
+          const origin = await hostOrigin();
+          if (!origin) throw new Error('Cannot reach the host to open the speech socket.');
+          const socket = new WebSocket(`${origin.replace(/^http/, 'ws')}/aura/asr/live`);
           turn.socket = socket;
 
           const finalText = new Promise((resolve) => {

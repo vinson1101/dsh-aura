@@ -437,7 +437,16 @@ export function apply(ctx, config = {}) {
           } catch {
             /* the version is a convenience; a missing manifest is not fatal */
           }
-          sendJson(res, 200, { version });
+          /* The page may be served from dsh-app://, where location.host is not
+           * the host. Name the real origin so the browser can build a socket
+           * URL for the live recognizer. */
+          let origin;
+          try {
+            origin = ctx.webServer.getOrigin();
+          } catch {
+            origin = undefined;
+          }
+          sendJson(res, 200, { version, origin });
         },
       }),
     'dsh-aura: version route',

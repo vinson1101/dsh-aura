@@ -129,6 +129,16 @@ window.WebSocket = WebSocketStub;
 const requests = [];
 window.fetch = async (url, init = {}) => {
   requests.push({ url, init });
+  /* The pane asks the host for its origin before opening the socket, because a
+   * dsh-app:// page has no usable location.host. */
+  if (url === '/aura/version') {
+    return {
+      ok: true,
+      status: 200,
+      async json() { return { version: 'test', origin: 'http://127.0.0.1:63215' }; },
+      async text() { return ''; },
+    };
+  }
   return { ok: true, status: 204, async json() { return {}; }, async text() { return ''; } };
 };
 
@@ -213,7 +223,7 @@ await new Promise((resolve) => setTimeout(resolve, 20));
 
 assert.ok(sockets.length === 1, 'one live socket per turn');
 const socket = sockets[0];
-assert.match(socket.url, /\/aura\/asr\/live$/);
+assert.equal(socket.url, 'ws://127.0.0.1:63215/aura/asr/live');
 assert.ok(socket.sent.some((value) => typeof value === 'string' && JSON.parse(value).type === 'hello'));
 
 const frame = new Float32Array(320);
