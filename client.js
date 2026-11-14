@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.13.0';
+const AURA_VERSION = '0.14.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -284,13 +284,12 @@ window.__ModuleLoader__.load({
      * Numbers are the reference's: 100 ms blocks, 900 ms of quiet, 4 s of
      * nothing, a 12 s cap.
      */
-    /** How long a partial must hold still before the sentence counts as done.
-     * The reference used 1.8 s on its local decoder; cloud partials settle a
-     * little sooner. */
-    const STABLE_MS = 1600;
     const CHUNK_MS = 100;
     const CHUNK_SIZE = (SAMPLE_RATE * CHUNK_MS) / 1000;
+    /** A short pause ends the turn only when the transcript looks finished. */
     const QUIET_CHUNKS = 9;
+    /** Otherwise a real pause still wins, just later. */
+    const LONG_QUIET_CHUNKS = 20;
     const NO_SPEECH_CHUNKS = 40;
     const MAX_CHUNKS = 120;
     const THRESHOLD_FLOOR = 450;
@@ -299,7 +298,7 @@ window.__ModuleLoader__.load({
     const FLOOR_DECAY = 0.8;
     const NOISE_CEILING = 850;
 
-    function createVad({ onChunk, onEnd }) {
+    function createVad({ onChunk, onEnd, isComplete }) {
       let carry = new Float32Array(0);
       let chunks = 0;
       let speech = false;
@@ -352,8 +351,17 @@ window.__ModuleLoader__.load({
         onChunk(toPcm(block), level, peak);
 
         if (speech && quiet >= QUIET_CHUNKS) {
-          end('quiet');
-          return;
+          /* Short pause: only finish if the recognizer already produced a
+           * sentence end. A cloud partial can be seconds stale, so "the text
+           * stopped changing" is not evidence that the user stopped talking. */
+          if (typeof isComplete === 'function' && isComplete()) {
+            end('sentence_end');
+            return;
+          }
+          if (quiet >= LONG_QUIET_CHUNKS) {
+            end('long_pause');
+            return;
+          }
         }
         if (!speech && chunks >= NO_SPEECH_CHUNKS) {
           end('no_speech');
@@ -489,8 +497,9 @@ registerProcessor('aura-capture', AuraCapture);`;
     };
     const BUTTON = {
       flex: '0 0 auto',
-      width: 34,
+      minWidth: 34,
       height: 34,
+      padding: '0 8px',
       display: 'grid',
       placeItems: 'center',
       borderRadius: 8,
@@ -500,6 +509,10 @@ registerProcessor('aura-capture', AuraCapture);`;
       font: 'inherit',
       fontSize: 14,
       cursor: 'pointer',
+    };
+    const BUTTON_ACTIVE = {
+      borderColor: 'var(--dsw-alias-border-strong, currentColor)',
+      background: 'var(--dsw-alias-bg-raised, rgba(127,127,127,.12))',
     };
     const ERROR = {
       fontSize: 11,
@@ -970,11 +983,17 @@ registerProcessor('aura-capture', AuraCapture);`;
               } catch {
                 /* a dead socket ends the turn on its own */
               }
-              /* The reference's second endpoint: the transcript stopped
-               * changing while the voice already dropped. */
-              const partial = partialRef.current;
-              if (!partial.text) return;
-              if (Date.now() - partial.at >= STABLE_MS && level <= 0.65 * peak) vad.end('stable');
+              /* No timing-based cutoff here. The Zebra reference could trust
+               * partial stability because its decoder ran locally and updated
+               * every 100 ms; cloud partials arrive in bursts, so a still
+               * transcript proves nothing about the speaker. The level and the
+               * peak stay available for future tuning. */
+              void level;
+              void peak;
+            },
+            isComplete() {
+              const text = partialRef.current.text.trim();
+              return /[。．.!！?？…；;]$/.test(text);
             },
             onEnd(reason, spoke, ms) {
               diag('capture_end', { reason, ms, speech: spoke });
@@ -1032,7 +1051,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         h(
           'div',
           { style: CAPTION, title: heard || undefined },
-          listening ? 'listening' : transcribing ? 'transcribing' : heard || phase,
+          listening ? 'listening' : transcribing ? 'transcribing' : heard || `${phase} · ${AURA_VERSION}`,
         ),
         h(
           'div',
@@ -1054,12 +1073,23 @@ registerProcessor('aura-capture', AuraCapture);`;
               'button',
               {
                 type: 'button',
-                style: BUTTON,
-                title: `${listening ? 'Stop listening' : 'Start listening'} · ${AURA_VERSION}`,
+                style: listening ? { ...BUTTON, ...BUTTON_ACTIVE } : BUTTON,
+                title: `${listening ? 'Stop listening' : 'Speak'} · ${AURA_VERSION}`,
                 'aria-label': listening ? 'Stop listening' : 'Start listening',
                 onClick: toggleMic,
               },
-              listening ? '●' : '○',
+              listening ? '● 在听' : '🎙 说话',
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                style: BUTTON,
+                title: `Play a test phrase · ${AURA_VERSION}`,
+                'aria-label': 'Play a test phrase',
+                onClick: () => void speak('你好，我是 Aura。现在可以听到我说话。'),
+              },
+              '🔊 试听',
             ),
             h(
               'button',

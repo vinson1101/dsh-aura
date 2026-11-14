@@ -112,7 +112,8 @@ class WebSocketStub {
     if (message.type === 'listen' && message.state === 'start') {
       reply({ type: 'listen', state: 'start', mode: 'manual' });
       /* One partial so the caption path is exercised too. */
-      reply({ type: 'stt', text: '打开插件', partial: true });
+      /* A sentence-final partial is what allows the short pause to end the turn. */
+      reply({ type: 'stt', text: '打开插件市场。', partial: true });
       return;
     }
     if (message.type === 'listen' && message.state === 'stop') {
