@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.10.5';
+const AURA_VERSION = '0.10.6';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -263,12 +263,15 @@ window.__ModuleLoader__.load({
     const SAMPLE_RATE = 16000;
     const FRAME_MS = 20;
     const FRAME_SIZE = (SAMPLE_RATE * FRAME_MS) / 1000;
-    const SILENCE_MS = 800;
+    const SILENCE_MS = 1200;
     const PREROLL_MS = 250;
-    const MIN_SPEECH_MS = 120;
+    const MIN_SPEECH_MS = 250;
     const MAX_UTTERANCE_MS = 20000;
     /** 3200 bytes = 100 ms of PCM16 mono: the reference's "no instruction" floor. */
     const MIN_CAPTURE_BYTES = 3200;
+    /** A teardown catches whatever was being said; under half a second of it is
+     * a fragment, and sending fragments is how half a sentence becomes a turn. */
+    const MIN_FLUSH_BYTES = 9600;
     const ENERGY_THRESHOLD = 0.012;
 
     /** Frame an arbitrary float stream into 20 ms blocks and cut utterances. */
@@ -924,6 +927,11 @@ registerProcessor('aura-capture', AuraCapture);`;
             });
             /* Below the reference's floor there was no instruction to send. */
             if (pcm.length < MIN_CAPTURE_BYTES) return;
+            /* A flush is a teardown, not an ending: only send a real utterance. */
+            if (reason === 'flush' && pcm.length < MIN_FLUSH_BYTES) {
+              diag('capture_dropped', { reason, bytes: pcm.length });
+              return;
+            }
             void transcribe(pcm);
           });
           node.port.onmessage = (event) => vad.push(event.data);

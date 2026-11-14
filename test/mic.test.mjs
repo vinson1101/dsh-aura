@@ -205,10 +205,11 @@ const frame = new Float32Array(320);
 const loud = new Float32Array(320);
 for (let i = 0; i < loud.length; i += 1) loud[i] = 0.2 * Math.sin((i / 16000) * 2 * Math.PI * 220);
 
-/* 400 ms of speech, then 900 ms of silence: the endpointing threshold is 800. */
+/* 400 ms of speech, then 1400 ms of silence: the endpointing threshold is
+ * 1200 ms now, so a thinking pause no longer ends the sentence. */
 for (let i = 0; i < 20; i += 1) liveNode.port.onmessage({ data: loud });
 assert.equal(posts.length, 0, 'speech alone must not finish an utterance');
-for (let i = 0; i < 45; i += 1) liveNode.port.onmessage({ data: frame });
+for (let i = 0; i < 70; i += 1) liveNode.port.onmessage({ data: frame });
 
 assert.equal(posts.length, 1, 'silence past the threshold must post exactly one utterance');
 const body = posts[0];
