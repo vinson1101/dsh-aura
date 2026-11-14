@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
     /** Tab identity; `id` and `kind` are the same string on purpose. */
     const TAB_ID = 'dsh-aura';
 
-    const VERSION = '0.9.2';
+    const VERSION = '0.10.0';
 
     /** Set once the tab type, body and title are all registered. */
     const registrations = { ready: false };
@@ -77,8 +77,9 @@ window.__ModuleLoader__.load({
       running: '151,151,255',
       waiting: '242,151,138',
       done: '97,222,194',
+      talking: '97,222,194',
     };
-    const SPIN = { idle: 0.22, running: 0.39, waiting: 0.26, done: 0.3 };
+    const SPIN = { idle: 0.22, running: 0.39, waiting: 0.26, done: 0.3, talking: 0.34 };
 
     /**
      * A form gets the canvas and the frame it sits in. The form owns its own
@@ -88,7 +89,7 @@ window.__ModuleLoader__.load({
      *
      * The contract is `mount(canvas, readPhase) -> { refresh, dispose }`.
      */
-    function mountOrb(canvas, readPhase) {
+    function mountOrb(canvas, readState) {
       const ctx = canvas.getContext('2d');
       if (!ctx) return { refresh() {}, dispose() {} };
       const frameElement = canvas.parentElement || canvas;
@@ -127,15 +128,19 @@ window.__ModuleLoader__.load({
         const size = canvas.width;
         if (!size) return;
 
-        const phase = readPhase() || 'idle';
+        const state = readState() || {};
+        const phase = state.phase || 'idle';
+        const level = Math.max(0, Math.min(1, state.level || 0));
         const tone = TONE[phase] || TONE.idle;
-        const fast = phase === 'running';
+        const fast = phase === 'running' || phase === 'talking';
         const t = elapsed / 1000;
-        const angle = t * (SPIN[phase] || SPIN.idle);
+        /* A louder voice turns the sphere faster and swells it slightly, so the
+         * shape reads as speech rather than as a fixed animation. */
+        const angle = t * (SPIN[phase] || SPIN.idle) * (1 + level * 0.8);
         const cos = Math.cos(angle);
         const sin = Math.sin(angle);
         const mid = size / 2;
-        const radius = size * (0.36 + 0.008 * Math.sin(t * (fast ? 6 : 2)));
+        const radius = size * (0.36 + 0.008 * Math.sin(t * (fast ? 6 : 2)) + level * 0.035);
 
         ctx.clearRect(0, 0, size, size);
         const glow = ctx.createRadialGradient(mid, mid, 0, mid, mid, radius * 1.2);
@@ -348,6 +353,14 @@ window.__ModuleLoader__.load({
 }
 registerProcessor('aura-capture', AuraCapture);`;
 
+    /** Decode base64 into bytes without spreading a huge array. */
+    function fromBase64(text) {
+      const binary = atob(String(text || ''));
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+      return bytes;
+    }
+
     /** btoa on a large buffer throws; convert in bounded slices. */
     function toBase64(bytes) {
       let binary = '';
@@ -356,6 +369,29 @@ registerProcessor('aura-capture', AuraCapture);`;
         binary += String.fromCharCode.apply(null, bytes.subarray(offset, offset + chunk));
       }
       return btoa(binary);
+    }
+
+    /** The most recent assistant message text in this session, or ''. */
+    function lastAssistantText(sessionId) {
+      const sessions = services && services.get ? services.get('sessions') : null;
+      if (!sessions || typeof sessions.binding !== 'function' || !sessionId) return '';
+      const binding = sessions.binding(sessionId);
+      const source = binding && binding.eventSource;
+      const window_ = source && typeof source.getSnapshot === 'function' ? source.getSnapshot() : null;
+      const entries = (window_ && window_.entries) || [];
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const event = entries[index] && entries[index].event;
+        if (!event || event.type !== 'assistant/message') continue;
+        const message = event.data && event.data.message;
+        const blocks = (message && message.content) || [];
+        const text = blocks
+          .filter((block) => block && block.type === 'text' && typeof block.text === 'string')
+          .map((block) => block.text)
+          .join('\n')
+          .trim();
+        if (text) return text;
+      }
+      return '';
     }
 
     const PANE = {
@@ -486,11 +522,8 @@ registerProcessor('aura-capture', AuraCapture);`;
       const wasRunning = React.useRef(false);
       const [settledAt, setSettledAt] = React.useState(0);
       const [settled, setSettled] = React.useState(false);
-
-      React.useEffect(() => {
-        if (wasRunning.current && !running) setSettledAt(Date.now() + SETTLED_MS);
-        wasRunning.current = running;
-      }, [running]);
+      /* Declared before the phase below reads it. */
+      const [talking, setTalking] = React.useState(false);
 
       React.useEffect(() => {
         if (!settledAt) {
@@ -505,7 +538,15 @@ registerProcessor('aura-capture', AuraCapture);`;
         return () => window.clearTimeout(timer);
       }, [settledAt]);
 
-      const phase = running ? 'running' : waiting ? 'waiting' : settled ? 'done' : 'idle';
+      const phase = talking
+        ? 'talking'
+        : running
+          ? 'running'
+          : waiting
+            ? 'waiting'
+            : settled
+              ? 'done'
+              : 'idle';
 
       const canvasRef = React.useRef(null);
       const phaseRef = React.useRef(phase);
@@ -515,7 +556,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       React.useEffect(() => {
         const canvas = canvasRef.current;
         if (!canvas) return undefined;
-        const instance = form.mount(canvas, () => phaseRef.current);
+        const instance = form.mount(canvas, () => ({ phase: phaseRef.current, level: levelRef.current }));
         formRef.current = instance;
         window.requestAnimationFrame(() => {
           diag('mounted', {
@@ -557,6 +598,112 @@ registerProcessor('aura-capture', AuraCapture);`;
       const [transcribing, setTranscribing] = React.useState(false);
       const [heard, setHeard] = React.useState('');
       const captureRef = React.useRef(null);
+      const voiceRef = React.useRef(null);
+      const levelRef = React.useRef(0);
+      const speakNext = React.useRef(false);
+
+      /** Stop playback and let the sphere settle. */
+      const stopSpeaking = React.useCallback(() => {
+        const playback = voiceRef.current;
+        voiceRef.current = null;
+        levelRef.current = 0;
+        setTalking(false);
+        if (!playback) return;
+        try {
+          playback.source.onended = null;
+          playback.source.stop();
+        } catch {
+          /* already finished */
+        }
+        if (playback.frame !== undefined) window.cancelAnimationFrame(playback.frame);
+        try {
+          playback.audio.close();
+        } catch {
+          /* already closed */
+        }
+      }, []);
+
+      /** Speak one reply: whole utterance, metered into the sphere. */
+      const speak = React.useCallback(
+        async (text) => {
+          const spoken = String(text || '').trim();
+          if (!spoken) return;
+          stopSpeaking();
+          try {
+            const response = await fetch('/aura/tts', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ text: spoken.slice(0, 2000) }),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(payload.error || 'speech synthesis failed');
+
+            const bytes = fromBase64(payload.pcm);
+            const samples = Math.floor(bytes.length / 2);
+            if (samples === 0) return;
+            const rate = Number(payload.sampleRate) || SAMPLE_RATE;
+            const AudioCtor = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtor) return;
+
+            const audio = new AudioCtor({ sampleRate: rate });
+            const buffer = audio.createBuffer(1, samples, rate);
+            const channel = buffer.getChannelData(0);
+            for (let index = 0; index < samples; index += 1) {
+              const low = bytes[index * 2];
+              const high = bytes[index * 2 + 1];
+              const value = (high << 8) | low;
+              channel[index] = (value >= 0x8000 ? value - 0x10000 : value) / 32768;
+            }
+
+            const source = audio.createBufferSource();
+            source.buffer = buffer;
+            const analyser = audio.createAnalyser();
+            analyser.fftSize = 512;
+            source.connect(analyser);
+            analyser.connect(audio.destination);
+
+            const data = new Uint8Array(analyser.fftSize);
+            const playback = { audio, source, frame: undefined };
+            const meter = () => {
+              if (voiceRef.current !== playback) return;
+              analyser.getByteTimeDomainData(data);
+              let sum = 0;
+              for (let index = 0; index < data.length; index += 1) {
+                const value = (data[index] - 128) / 128;
+                sum += value * value;
+              }
+              levelRef.current = Math.min(1, Math.sqrt(sum / data.length) * 2.6);
+              playback.frame = window.requestAnimationFrame(meter);
+            };
+
+            source.onended = () => {
+              if (voiceRef.current === playback) stopSpeaking();
+            };
+            voiceRef.current = playback;
+            setTalking(true);
+            source.start();
+            playback.frame = window.requestAnimationFrame(meter);
+          } catch (failure) {
+            setError(String((failure && failure.message) || failure));
+          }
+        },
+        [stopSpeaking],
+      );
+
+      React.useEffect(() => () => stopSpeaking(), [stopSpeaking]);
+
+      React.useEffect(() => {
+        if (wasRunning.current && !running) {
+          setSettledAt(Date.now() + SETTLED_MS);
+          /* A run we started ends here: read its reply and speak it. */
+          if (speakNext.current) {
+            speakNext.current = false;
+            const reply = lastAssistantText(props.sessionId);
+            if (reply) void speak(reply);
+          }
+        }
+        wasRunning.current = running;
+      }, [running, props.sessionId, speak]);
 
       /** Send one message into the session this pane belongs to. */
       const submitText = React.useCallback(
@@ -576,6 +723,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               setError((result.error && result.error.message) || 'The session refused the message.');
               return false;
             }
+            speakNext.current = true;
             return true;
           } catch (failure) {
             setError(String((failure && failure.message) || failure));
@@ -593,6 +741,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       }, [draft, busy, submitText]);
 
       const stop = React.useCallback(async () => {
+        stopSpeaking();
         const session = bindSession(props.sessionId);
         if (!session) {
           setError('No live session for this pane.');
@@ -607,7 +756,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         } catch (failure) {
           setError(String((failure && failure.message) || failure));
         }
-      }, [props.sessionId]);
+      }, [props.sessionId, stopSpeaking]);
 
       const onKeyDown = React.useCallback(
         (event) => {

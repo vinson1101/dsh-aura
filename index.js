@@ -19,6 +19,7 @@ import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { createAsr } from './asr.js';
 import { createKeyReader } from './secrets.js';
+import { createTts } from './tts.js';
 
 export const inject = ['webServer'];
 
@@ -87,6 +88,7 @@ export function apply(ctx, config = {}) {
     readSecretsFile: () => readFile(path.join(dshHome(), 'aura-secrets.env'), 'utf8'),
   });
   const asr = createAsr(asrConfig, readKey);
+  const tts = createTts(config.tts || {}, readKey);
 
   ctx.effect(
     () =>
@@ -166,5 +168,48 @@ export function apply(ctx, config = {}) {
         },
       }),
     'dsh-aura: speech to text route',
+  );
+
+  ctx.effect(
+    () =>
+      ctx.webServer.register({
+        kind: 'exact',
+        path: '/aura/tts',
+        handler: async (req, res) => {
+          if (req.method !== 'POST') {
+            res.writeHead(405);
+            res.end();
+            return;
+          }
+          let request;
+          try {
+            request = JSON.parse(await readBody(req));
+          } catch {
+            sendJson(res, 400, { error: 'invalid JSON body' });
+            return;
+          }
+          const text = String(request.text || '').trim().slice(0, 2000);
+          if (!text) {
+            sendJson(res, 400, { error: 'no text' });
+            return;
+          }
+          try {
+            const result = await tts.synthesize({ text });
+            sendJson(res, 200, {
+              pcm: result.pcm.toString('base64'),
+              sampleRate: result.sampleRate,
+              provider: tts.name,
+              voice: result.voice,
+              chars: text.length,
+            });
+          } catch (failure) {
+            sendJson(res, 502, {
+              error: String((failure && failure.message) || failure).slice(0, 400),
+              provider: tts.name,
+            });
+          }
+        },
+      }),
+    'dsh-aura: speech synthesis route',
   );
 }
