@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.20.0';
+const AURA_VERSION = '0.20.1';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -540,19 +540,19 @@ registerProcessor('aura-capture', AuraCapture);`;
       cursor: 'pointer',
     };
     const STYLE = `
-      .aura-top { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-height: 60px; }
-      .aura-chip { display: inline-flex; align-items: center; gap: 16px; padding: 4px 14px 4px 4px;
+      .aura-top { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-height: 46px; }
+      .aura-chip { display: inline-flex; align-items: center; gap: 10px; padding: 3px 12px 3px 3px;
         border: 1px solid rgba(160, 170, 190, .16); border-radius: 999px;
         background: rgba(120, 132, 152, .12); backdrop-filter: blur(10px);
         color: inherit;
-        font: inherit; font-size: 28px; font-weight: 500; letter-spacing: -.01em;
+        font: inherit; font-size: 20px; font-weight: 500; letter-spacing: -.01em;
         cursor: pointer; transition: background .15s ease, border-color .15s ease; }
       .aura-chip:hover { background: rgba(127,127,127,.14); border-color: rgba(127,127,127,.22); }
       .aura-chip[aria-expanded='true'] { background: rgba(127,127,127,.16); border-color: rgba(127,127,127,.28); }
-      .aura-ava { width: 52px; height: 52px; border-radius: 999px; object-fit: cover; display: block;
+      .aura-ava { width: 38px; height: 38px; border-radius: 999px; object-fit: cover; display: block;
         background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
-      .aura-ava-fallback { width: 52px; height: 52px; border-radius: 999px; display: grid; place-items: center;
-        font-size: 22px; font-weight: 600; color: #cfe4ff; background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
+      .aura-ava-fallback { width: 38px; height: 38px; border-radius: 999px; display: grid; place-items: center;
+        font-size: 16px; font-weight: 600; color: #cfe4ff; background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
       /* Starts below the chip, never on top of it: the control that opens the
        * card must stay clickable while it is open. */
       /* The theme already owns the popover surface and its glass treatment;
@@ -563,9 +563,9 @@ registerProcessor('aura-capture', AuraCapture);`;
       /* Same ingredients as the chip above it: a neutral colour, an alpha, and
        * a blur. The theme's surface tokens are opaque, which is why the card
        * stayed dark while the chip looked like glass. */
-      .aura-card { position: absolute; top: 74px; right: 8px; width: 276px;
+      .aura-card { position: absolute; top: 58px; right: 8px; width: 276px;
       max-width: calc(100% - 16px); padding: 14px;
-      max-height: calc(100% - 82px); overflow-y: auto; overscroll-behavior: contain;
+      max-height: calc(100% - 66px); overflow-y: auto; overscroll-behavior: contain;
       display: grid; gap: 12px; border-radius: 14px;
       border: 1px solid rgba(160, 170, 190, .22);
       background: rgba(120, 132, 152, .18);
@@ -578,7 +578,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         background: transparent; color: inherit; font: inherit; font-size: 14px; line-height: 1;
         opacity: .45; cursor: pointer; }
       .aura-close:hover { opacity: 1; background: rgba(127,127,127,.16); }
-      .aura-id img, .aura-id .aura-ava-fallback { width: 46px; height: 46px; font-size: 18px; }
+      .aura-id img, .aura-id .aura-ava-fallback { width: 42px; height: 42px; font-size: 17px; }
       .aura-name { font-size: 15px; font-weight: 600; letter-spacing: .01em; }
       .aura-sub { font-size: 11px; color: var(--dsw-alias-label-tertiary, inherit); opacity: .8; margin-top: 2px; }
       .aura-rule { height: 1px; background: rgba(255,255,255,.1); margin: 0 -4px; }
@@ -714,12 +714,15 @@ registerProcessor('aura-capture', AuraCapture);`;
     };
 
     const FOOTER = { display: 'grid', gap: 6 };
-    const ROW = { display: 'flex', gap: 6, alignItems: 'flex-end', flexWrap: 'wrap' };
+    /* No wrapping: a wrapped button is a clipped button in this pane. The input
+     * shrinks instead, which is what minWidth: 0 on the field allows. */
+    const ROW = { display: 'flex', gap: 6, alignItems: 'flex-end', flexWrap: 'nowrap' };
     /** The composer's tallest state before it scrolls instead of growing. */
     const MAX_DRAFT_HEIGHT = 132;
     const INPUT = {
-      flex: 1,
-      minHeight: 42,
+      flex: '1 1 0%',
+      minWidth: 0,
+      minHeight: 38,
       maxHeight: 132,
       resize: 'none',
       padding: '7px 9px',
@@ -740,17 +743,17 @@ registerProcessor('aura-capture', AuraCapture);`;
       alignItems: 'center',
       justifyContent: 'center',
       gap: 6,
-      minWidth: 44,
-      height: 42,
-      padding: '0 16px',
+      minWidth: 40,
+      height: 38,
+      padding: '0 14px',
       display: 'grid',
       placeItems: 'center',
-      borderRadius: 11,
+      borderRadius: 10,
       border: '1px solid var(--dsw-alias-border-base, rgba(127,127,127,.35))',
       background: 'transparent',
       color: 'inherit',
       font: 'inherit',
-      fontSize: 17,
+      fontSize: 15,
       cursor: 'pointer',
     };
     const BUTTON_ACTIVE = {
