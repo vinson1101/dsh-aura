@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
     /** Tab identity; `id` and `kind` are the same string on purpose. */
     const TAB_ID = 'dsh-aura';
 
-    const VERSION = '0.5.2';
+    const VERSION = '0.5.3';
 
     /** Set once the tab type, body and title are all registered. */
     const registrations = { ready: false };
@@ -81,45 +81,51 @@ window.__ModuleLoader__.load({
     const SPIN = { idle: 0.22, running: 0.39, waiting: 0.26, done: 0.3 };
 
     /**
-     * Paints the orb into `canvas` and returns `{ refresh, dispose }` rather
-     * than a bare cleanup, because the caller must also force a redraw when the
-     * phase changes while `prefers-reduced-motion` is on: in that mode no frame
-     * is ever scheduled, so nothing else would repaint.
+     * A form gets the canvas and the frame it sits in. The form owns its own
+     * geometry: it squares the element from the frame's shorter side, so the
+     * browser never stretches a square bitmap into a tall box — which is what
+     * turned the sphere into an oval with pointed ends.
      *
-     * The sphere fits the smaller canvas dimension, so a tall pane and a wide
-     * pane both stay inside their box.
+     * The contract is `mount(canvas, readPhase) -> { refresh, dispose }`.
      */
     function mountOrb(canvas, readPhase) {
       const ctx = canvas.getContext('2d');
       if (!ctx) return { refresh() {}, dispose() {} };
+      const frameElement = canvas.parentElement || canvas;
       const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
-      let frame;
+      const MAX_SIZE = 720;
+      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      let pending;
       let elapsed = 0;
       let previous = 0;
       let disposed = false;
 
+      /** Square the element and match the backing store to it, in one place. */
+      function fit() {
+        const box = frameElement.getBoundingClientRect();
+        const size = Math.max(1, Math.round(Math.min(box.width, box.height, MAX_SIZE)));
+        const pixels = Math.max(1, Math.round(size * ratio));
+        const css = size + 'px';
+        if (canvas.style.width !== css) {
+          canvas.style.width = css;
+          canvas.style.height = css;
+        }
+        if (canvas.width !== pixels) {
+          canvas.width = pixels;
+          canvas.height = pixels;
+        }
+        return pixels;
+      }
+
       function draw(now) {
-        frame = undefined;
+        pending = undefined;
         if (disposed) return;
         const quiet = motion.matches;
         if (previous && !quiet) elapsed += Math.min(50, now - previous);
         previous = now;
 
-        /* One scale for both axes: a square backing store stretched into a tall
-         * box is exactly the oval this used to draw. Cap the longer side, keep
-         * the ratio. */
-        const ratio = Math.min(window.devicePixelRatio || 1, 2);
-        const boxWidth = canvas.clientWidth;
-        const boxHeight = canvas.clientHeight;
-        if (!boxWidth || !boxHeight) return;
-        const scale = Math.min(ratio, 920 / Math.max(boxWidth, boxHeight));
-        const width = Math.max(1, Math.round(boxWidth * scale));
-        const height = Math.max(1, Math.round(boxHeight * scale));
-        const short = Math.min(width, height);
-        if (canvas.width !== width || canvas.height !== height) {
-          canvas.width = width;
-          canvas.height = height;
-        }
+        const size = canvas.width;
+        if (!size) return;
 
         const phase = readPhase() || 'idle';
         const tone = TONE[phase] || TONE.idle;
@@ -128,17 +134,16 @@ window.__ModuleLoader__.load({
         const angle = t * (SPIN[phase] || SPIN.idle);
         const cos = Math.cos(angle);
         const sin = Math.sin(angle);
-        const midX = width / 2;
-        const midY = height / 2;
-        const radius = short * (0.36 + 0.008 * Math.sin(t * (fast ? 6 : 2)));
+        const mid = size / 2;
+        const radius = size * (0.36 + 0.008 * Math.sin(t * (fast ? 6 : 2)));
 
-        ctx.clearRect(0, 0, width, height);
-        const glow = ctx.createRadialGradient(midX, midY, 0, midX, midY, radius * 1.2);
+        ctx.clearRect(0, 0, size, size);
+        const glow = ctx.createRadialGradient(mid, mid, 0, mid, mid, radius * 1.2);
         glow.addColorStop(0, `rgba(${tone},.21)`);
         glow.addColorStop(0.68, `rgba(${tone},.06)`);
         glow.addColorStop(1, `rgba(${tone},0)`);
         ctx.fillStyle = glow;
-        ctx.fillRect(0, 0, width, height);
+        ctx.fillRect(0, 0, size, size);
 
         const groups = Array.from({ length: 6 }, () => []);
         for (const [x, y, z, seed] of POINTS) {
@@ -146,9 +151,9 @@ window.__ModuleLoader__.load({
           const wave = 1 + 0.035 * Math.sin(10 * y + t * 2 + seed);
           const strength = (depth + 1) * 0.5;
           groups[Math.min(5, Math.floor(strength * 6))].push([
-            midX + (x * cos + z * sin) * radius * wave,
-            midY + y * radius * wave,
-            Math.max(0.48, short * (0.0008 + 0.0014 * strength)),
+            mid + (x * cos + z * sin) * radius * wave,
+            mid + y * radius * wave,
+            Math.max(0.48, size * (0.0008 + 0.0014 * strength)),
           ]);
         }
         groups.forEach((group, index) => {
@@ -161,20 +166,20 @@ window.__ModuleLoader__.load({
           ctx.fill();
         });
 
-        if (!quiet && !document.hidden) frame = window.requestAnimationFrame(draw);
+        if (!quiet && !document.hidden) pending = window.requestAnimationFrame(draw);
       }
 
       function refresh() {
         if (disposed) return;
-        if (frame !== undefined) window.cancelAnimationFrame(frame);
+        if (pending !== undefined) window.cancelAnimationFrame(pending);
+        pending = undefined;
         previous = 0;
+        fit();
         draw(window.performance.now());
       }
 
-      const resize = new ResizeObserver(() => {
-        if (motion.matches || frame === undefined) refresh();
-      });
-      resize.observe(canvas);
+      const resize = new ResizeObserver(() => refresh());
+      resize.observe(frameElement);
       motion.addEventListener('change', refresh);
       document.addEventListener('visibilitychange', refresh);
       refresh();
@@ -183,8 +188,8 @@ window.__ModuleLoader__.load({
         refresh,
         dispose() {
           disposed = true;
-          if (frame !== undefined) window.cancelAnimationFrame(frame);
-          frame = undefined;
+          if (pending !== undefined) window.cancelAnimationFrame(pending);
+          pending = undefined;
           resize.disconnect();
           motion.removeEventListener('change', refresh);
           document.removeEventListener('visibilitychange', refresh);
@@ -238,8 +243,17 @@ window.__ModuleLoader__.load({
       padding: 16,
       boxSizing: 'border-box',
     };
-    const STAGE = { width: '100%', height: '100%', minHeight: 160, display: 'grid', placeItems: 'center' };
-    const CANVAS = { display: 'block', width: '100%', height: '100%' };
+    /* The stage only centres; the form squares the canvas inside it. */
+    const STAGE = {
+      width: '100%',
+      height: '100%',
+      minHeight: 160,
+      display: 'grid',
+      placeItems: 'center',
+      overflow: 'hidden',
+    };
+    /* No size here: the form writes both CSS sides and the backing store. */
+    const CANVAS = { display: 'block' };
     const CAPTION = {
       font: 'inherit',
       fontSize: 11,

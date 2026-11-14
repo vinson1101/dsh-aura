@@ -37,18 +37,13 @@ const context = {
   createRadialGradient: () => ({ addColorStop: () => {} }),
 };
 window.HTMLCanvasElement.prototype.getContext = () => context;
-/* jsdom has no layout engine, so clientWidth/clientHeight are 0 and the form
- * would correctly skip painting. Give the canvas a deliberately non-square box:
- * a tall panel is where a square backing store used to stretch the sphere into
- * an oval, so this shape is the regression case. */
+/* jsdom has no layout engine, so every box is 0 and the form would correctly
+ * skip painting. Report a deliberately tall, narrow frame: that is the shape
+ * that used to stretch a square bitmap into an oval with pointed ends. */
 const BOX = { width: 220, height: 720 };
-Object.defineProperty(window.HTMLCanvasElement.prototype, 'clientWidth', {
-  get: () => BOX.width,
-  configurable: true,
-});
-Object.defineProperty(window.HTMLCanvasElement.prototype, 'clientHeight', {
-  get: () => BOX.height,
-  configurable: true,
+window.Element.prototype.getBoundingClientRect = () => ({
+  x: 0, y: 0, top: 0, left: 0, right: BOX.width, bottom: BOX.height,
+  width: BOX.width, height: BOX.height,
 });
 window.matchMedia = (query) => ({
   matches: false,
@@ -164,19 +159,25 @@ assert.equal(pane.component.name, 'AuraPane');
 
 const canvas = container.querySelector('canvas');
 assert.ok(canvas, 'the pane must contain a canvas; rendered instead: ' + text.slice(0, 400));
-assert.ok(canvas.width > 0 && canvas.height > 0, 'the form must size the canvas backing store');
-/* The bug this guards: a square backing store painted into a tall box renders
- * an ellipse with pointed ends. The bitmap must keep the box's aspect ratio. */
-const boxRatio = BOX.width / BOX.height;
-const bufferRatio = canvas.width / canvas.height;
-assert.ok(
-  Math.abs(bufferRatio - boxRatio) < 0.01,
-  `the backing store must keep the box aspect (${bufferRatio.toFixed(3)} vs ${boxRatio.toFixed(3)})`,
+/* The bug this guards: a non-square element let the browser stretch a square
+ * bitmap into an oval. The element and the buffer must both be square, and the
+ * side must follow the frame's shorter edge. */
+assert.equal(
+  canvas.width,
+  canvas.height,
+  'the backing store must be square',
 );
-assert.ok(
-  Math.max(canvas.width, canvas.height) <= 920,
-  'the longer side must respect the 920 px cap',
+assert.equal(
+  canvas.width,
+  Math.min(BOX.width, BOX.height),
+  'the side must follow the shorter frame edge',
 );
+assert.equal(
+  canvas.style.width,
+  Math.min(BOX.width, BOX.height) + 'px',
+  'the element must be squared through CSS as well',
+);
+assert.equal(canvas.style.height, canvas.style.width, 'both CSS sides must match');
 assert.ok(painted.clear > 0, 'the form must paint at least one frame');
 assert.ok(painted.fill > 0, 'the form must fill its depth groups');
 assert.ok(container.querySelector('textarea'), 'the pane must carry its composer');
