@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.20.7';
+const AURA_VERSION = '0.21.1';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1070,11 +1070,13 @@ registerProcessor('aura-capture', AuraCapture);`;
         levelRef.current = 0;
         setTalking(false);
         if (!playback) return;
-        try {
-          playback.source.onended = null;
-          playback.source.stop();
-        } catch {
-          /* already finished */
+        for (const source of playback.sources || []) {
+          try {
+            source.onended = null;
+            source.stop();
+          } catch {
+            /* already finished */
+          }
         }
         if (playback.frame !== undefined) window.cancelAnimationFrame(playback.frame);
         try {
@@ -1095,50 +1097,31 @@ registerProcessor('aura-capture', AuraCapture);`;
             const response = await fetch('/aura/tts', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({
-                text: spoken.slice(0, 2000),
-                voice: voice || prefsRef.current.voice,
-              }),
+              body: JSON.stringify({ text: spoken.slice(0, 2000), voice: voice || prefsRef.current.voice }),
             });
-            const payload = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(payload.error || 'speech synthesis failed');
-            diag('tts_ok', { voice: payload.voice, sampleRate: payload.sampleRate });
+            if (!response.ok) {
+              const failure = await response.json().catch(() => ({}));
+              throw new Error(failure.error || 'speech synthesis failed');
+            }
 
-            const bytes = fromBase64(payload.pcm);
-            const samples = Math.floor(bytes.length / 2);
-            if (samples === 0) return;
-            const rate = Number(payload.sampleRate) || SAMPLE_RATE;
+            const rate = Number(response.headers.get('x-aura-sample-rate')) || SAMPLE_RATE;
             const AudioCtor = window.AudioContext || window.webkitAudioContext;
-            if (!AudioCtor) return;
-
+            if (!AudioCtor) throw new Error('This browser exposes no Web Audio.');
             const audio = new AudioCtor({ sampleRate: rate });
-            /* Chromium starts a context created outside a gesture suspended;
-             * start() on a suspended context plays nothing at all. */
             if (audio.state === 'suspended') {
               try {
                 await audio.resume();
               } catch {
-                /* report through the beacon below */
+                /* reported by the beacon below */
               }
             }
-            const buffer = audio.createBuffer(1, samples, rate);
-            const channel = buffer.getChannelData(0);
-            for (let index = 0; index < samples; index += 1) {
-              const low = bytes[index * 2];
-              const high = bytes[index * 2 + 1];
-              const value = (high << 8) | low;
-              channel[index] = (value >= 0x8000 ? value - 0x10000 : value) / 32768;
-            }
 
-            const source = audio.createBufferSource();
-            source.buffer = buffer;
             const analyser = audio.createAnalyser();
             analyser.fftSize = 512;
-            source.connect(analyser);
             analyser.connect(audio.destination);
 
+            const playback = { audio, analyser, sources: [], frame: undefined, at: 0 };
             const data = new Uint8Array(analyser.fftSize);
-            const playback = { audio, source, frame: undefined };
             const meter = () => {
               if (voiceRef.current !== playback) return;
               analyser.getByteTimeDomainData(data);
@@ -1151,19 +1134,60 @@ registerProcessor('aura-capture', AuraCapture);`;
               playback.frame = window.requestAnimationFrame(meter);
             };
 
-            source.onended = () => {
-              if (voiceRef.current !== playback) return;
-              diag('play_end');
-              stopSpeaking();
+            /* Play each slice as it lands: the first audio starts as soon as the
+             * provider produces it, instead of after the whole reply exists. */
+            const schedule = (samples) => {
+              if (samples.length === 0 || voiceRef.current !== playback) return;
+              const buffer = audio.createBuffer(1, samples.length, rate);
+              buffer.copyToChannel(samples, 0);
+              const source = audio.createBufferSource();
+              source.buffer = buffer;
+              source.connect(analyser);
+              playback.sources.push(source);
+              source.onended = () => {
+                playback.sources = playback.sources.filter((item) => item !== source);
+                if (voiceRef.current !== playback || playback.sources.length > 0) return;
+                if (audio.currentTime >= playback.at - 0.05) {
+                  diag('play_end');
+                  stopSpeaking();
+                }
+              };
+              source.start(Math.max(playback.at, audio.currentTime));
+              playback.at = Math.max(playback.at, audio.currentTime) + samples.length / rate;
             };
+
             voiceRef.current = playback;
             setTalking(true);
-            source.start();
             playback.frame = window.requestAnimationFrame(meter);
-            diag('play_start', { state: audio.state, seconds: Number((samples / rate).toFixed(2)) });
+            diag('play_start', { state: audio.state, rate });
+
+            const reader = response.body.getReader();
+            let carry = new Uint8Array(0);
+            let chunks = 0;
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              if (!value) continue;
+              const merged = new Uint8Array(carry.length + value.length);
+              merged.set(carry);
+              merged.set(value, carry.length);
+              const usable = merged.length - (merged.length % 2);
+              const samples = new Float32Array(usable / 2);
+              for (let index = 0; index < samples.length; index += 1) {
+                const low = merged[index * 2];
+                const high = merged[index * 2 + 1];
+                const sample = (high << 8) | low;
+                samples[index] = (sample >= 0x8000 ? sample - 0x10000 : sample) / 32768;
+              }
+              carry = merged.slice(usable);
+              chunks += 1;
+              schedule(samples);
+            }
+            diag('tts_ok', { chunks });
           } catch (failure) {
             diag('tts_error', { message: String((failure && failure.message) || failure).slice(0, 200) });
             setError(String((failure && failure.message) || failure));
+            stopSpeaking();
           }
         },
         [stopSpeaking],

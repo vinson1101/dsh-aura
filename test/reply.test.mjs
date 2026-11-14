@@ -52,7 +52,12 @@ class AudioContextStub {
   }
   createBuffer(channels, length, rate) {
     const data = new Float32Array(length);
-    return { length, sampleRate: rate, getChannelData: () => data };
+    return {
+      length,
+      sampleRate: rate,
+      getChannelData: () => data,
+      copyToChannel: (source) => data.set(source.subarray(0, length)),
+    };
   }
   createBufferSource() {
     const source = {
@@ -84,10 +89,22 @@ window.fetch = async (url, init = {}) => {
     const pcm = Buffer.alloc(8);
     pcm.writeInt16LE(1200, 0);
     pcm.writeInt16LE(-1200, 2);
+    const bytes = new Uint8Array(pcm);
+    let sent = false;
     return {
       ok: true,
       status: 200,
-      async json() { return { pcm: pcm.toString('base64'), sampleRate: 16000, provider: 'bailian_cosyvoice' }; },
+      headers: { get: (name) => (name === 'x-aura-sample-rate' ? '16000' : null) },
+      body: {
+        getReader: () => ({
+          async read() {
+            if (sent) return { done: true, value: undefined };
+            sent = true;
+            return { done: false, value: bytes };
+          },
+        }),
+      },
+      async json() { return {}; },
       async text() { return ''; },
     };
   }

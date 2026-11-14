@@ -397,20 +397,40 @@ export function apply(ctx, config = {}) {
             sendJson(res, 400, { error: 'no text' });
             return;
           }
+          /* Raw PCM, chunked: the browser plays it as it arrives instead of
+           * waiting for the whole sentence to be synthesised. */
           try {
-            const result = await tts.synthesize({ text, voice });
-            sendJson(res, 200, {
-              pcm: result.pcm.toString('base64'),
-              sampleRate: result.sampleRate,
-              provider: tts.name,
-              voice: result.voice,
-              chars: text.length,
+            res.writeHead(200, {
+              'content-type': 'audio/L16',
+              'cache-control': 'no-store',
+              'x-aura-sample-rate': String(16000),
+              'x-aura-provider': tts.name,
             });
+            await tts.stream({
+              text,
+              voice,
+              onChunk: (chunk) => {
+                try {
+                  res.write(chunk);
+                } catch {
+                  /* the client went away; the stream ends on its own */
+                }
+              },
+            });
+            res.end();
           } catch (failure) {
-            sendJson(res, 502, {
-              error: String((failure && failure.message) || failure).slice(0, 400),
-              provider: tts.name,
-            });
+            if (!res.headersSent) {
+              sendJson(res, 502, {
+                error: String((failure && failure.message) || failure).slice(0, 400),
+                provider: tts.name,
+              });
+              return;
+            }
+            try {
+              res.end();
+            } catch {
+              /* already closed */
+            }
           }
         },
       }),

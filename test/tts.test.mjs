@@ -155,3 +155,18 @@ assert.equal(audioOfEvent({ output: { audio: { data: 'AAEC' } } }).length, 3);
 }
 
 console.log('tts.test.mjs: ok');
+
+/* ---- a long reply is cut at a sentence, not sent to the provider --------- */
+
+{
+  const { speakablePrefix } = await import('../tts.js');
+  const short = speakablePrefix('收到。', 140);
+  assert.equal(short.spoken, '收到。');
+  assert.equal(short.truncated, false);
+
+  const long = '第一句话在这里。'.repeat(40);
+  const cut = speakablePrefix(long, 140);
+  assert.ok(cut.truncated, 'a long reply is marked truncated');
+  assert.ok(cut.spoken.length <= 140, 'and stays inside the budget');
+  assert.ok(cut.spoken.endsWith('。'), 'cutting prefers a sentence boundary');
+}

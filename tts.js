@@ -18,7 +18,7 @@ const DEFAULTS = {
   model: 'cosyvoice-v3-flash',
   voice: 'longanyang',
   sampleRate: 16000,
-  timeoutMs: 30000,
+  timeoutMs: 45000,
 };
 
 function endpointOf(baseUrl) {
@@ -126,14 +126,108 @@ export async function assemblePcm(textChunks) {
   return stripWaveHeader(Buffer.concat(pieces));
 }
 
+/**
+ * Cut text down to what can be synthesised inside the timeout.
+ *
+ * Measured against the provider: about 0.12 s of synthesis per character, so
+ * 320 characters already exceed a 30 s budget. Prefer a sentence boundary near
+ * the limit; fall back to a hard cut.
+ */
+export function speakablePrefix(text, maxChars = 140) {
+  const whole = String(text || '').trim();
+  if (whole.length <= maxChars) return { spoken: whole, truncated: false };
+  const head = whole.slice(0, maxChars);
+  const cut = Math.max(
+    head.lastIndexOf('。'),
+    head.lastIndexOf('！'),
+    head.lastIndexOf('？'),
+    head.lastIndexOf('\n'),
+    head.lastIndexOf('.'),
+  );
+  const spoken = cut >= 40 ? head.slice(0, cut + 1) : head;
+  return { spoken, truncated: true };
+}
+
+/**
+ * Synthesise and hand every audio slice to `onChunk` as it arrives.
+ *
+ * The RIFF header can appear in the first slice; it is stripped there and only
+ * there, because the stream after it is continuous PCM.
+ */
+export async function streamSynthesize(options) {
+  const { text, apiKey, baseUrl, model, voice, sampleRate, timeoutMs, signal, onChunk } = options;
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), timeoutMs);
+  const composed = signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal;
+  let stripped = false;
+  let total = 0;
+  try {
+    const response = await fetch(endpointOf(baseUrl), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'X-DashScope-SSE': 'enable',
+      },
+      body: JSON.stringify({
+        model,
+        input: { text, voice, format: 'wav', sample_rate: sampleRate },
+      }),
+      signal: composed,
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(`Bailian TTS HTTP ${response.status}: ${body.slice(0, 300)}`);
+    }
+    const decoder = new TextDecoder();
+    const lines = (async function* read() {
+      for await (const chunk of response.body) yield decoder.decode(chunk, { stream: true });
+    })();
+    for await (const payload of sseData(lines)) {
+      let event;
+      try {
+        event = JSON.parse(payload);
+      } catch {
+        continue;
+      }
+      let audio = audioOfEvent(event);
+      if (audio.length === 0) continue;
+      if (!stripped) {
+        audio = stripWaveHeader(audio);
+        stripped = true;
+      }
+      if (audio.length === 0) continue;
+      total += audio.length;
+      onChunk(audio);
+    }
+    if (total === 0) throw new Error('Bailian TTS returned no audio');
+    return { bytes: total };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function createTts(config = {}, readKey = async (configKey) => configKey) {
   const merged = { ...DEFAULTS, ...config };
+  const DEFAULTS_MAX = 300;
 
   return {
     name: 'bailian_cosyvoice',
     voice: merged.voice,
+    stream: (options) =>
+      streamSynthesize({
+        apiKey: options.apiKey,
+        baseUrl: merged.baseUrl,
+        model: merged.model,
+        voice: options.voice || merged.voice,
+        sampleRate: merged.sampleRate,
+        timeoutMs: merged.timeoutMs,
+        text: options.text,
+        signal: options.signal,
+        onChunk: options.onChunk,
+      }),
     async synthesize({ text, voice, signal }) {
-      const spoken = String(text || '').trim();
+      const { spoken, truncated } = speakablePrefix(text, merged.maxChars ?? 300);
       if (!spoken) throw new Error('no text');
       const apiKey = await readKey(merged.apiKey);
       if (!apiKey) throw new Error('Bailian TTS needs an API key');
@@ -175,7 +269,14 @@ export function createTts(config = {}, readKey = async (configKey) => configKey)
         const pcm = merged.trimSilence === false
           ? raw
           : trimSilence(raw, { sampleRate: merged.sampleRate });
-        return { pcm, sampleRate: merged.sampleRate, model: merged.model, voice: voice || merged.voice };
+        return {
+          pcm,
+          sampleRate: merged.sampleRate,
+          model: merged.model,
+          voice: voice || merged.voice,
+          spoken: spoken.length,
+          truncated,
+        };
       } finally {
         clearTimeout(timer);
       }
