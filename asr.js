@@ -17,7 +17,6 @@
 const DEFAULTS = {
   provider: 'fake',
   baseUrl: 'https://dashscope.aliyuncs.com/api/v1',
-  model: 'fun-asr-flash-2026-06-15',
   timeoutMs: 60000,
   fakeText: '这是一次测试识别',
 };
@@ -112,7 +111,7 @@ function bailianProvider(options, readKey) {
             'X-DashScope-SSE': 'disable',
           },
           body: JSON.stringify({
-            model: options.model ?? DEFAULTS.model,
+            model: options.model ?? 'fun-asr-flash-2026-06-15',
             input: { messages },
             parameters: { format: 'wav', sample_rate: String(sampleRate) },
           }),
@@ -133,6 +132,199 @@ function bailianProvider(options, readKey) {
   };
 }
 
+/* ---- Paraformer realtime -------------------------------------------------
+ *
+ * The provider the Zebra bridge runs in production
+ * (docs/PHASE7B_ASR_PROVIDER.md: `XOB_ASR_PROVIDER=bailian_paraformer_realtime`,
+ * model `paraformer-realtime-v2`). It is a duplex WebSocket: `run-task`, then
+ * PCM chunks as binary frames, then `finish-task`, reading
+ * `result-generated` events until `task-finished`.
+ *
+ * `connect` is a seam so the protocol can be exercised without a socket.
+ */
+function paraformerUrl(baseUrl) {
+  try {
+    const parsed = new URL(baseUrl);
+    const host = parsed.host || parsed.pathname;
+    return `wss://${host}/api-ws/v1/inference`;
+  } catch {
+    return 'wss://dashscope.aliyuncs.com/api-ws/v1/inference';
+  }
+}
+
+/** Default transport: the `ws` package, imported lazily so other providers
+ * work even when it is absent. */
+async function defaultConnect(url, apiKey, timeoutMs) {
+  const { WebSocket } = await import('ws');
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      handshakeTimeout: timeoutMs,
+    });
+    const queue = [];
+    let notify = null;
+    let settled = false;
+    const wake = () => {
+      if (notify) {
+        const resume = notify;
+        notify = null;
+        resume();
+      }
+    };
+    socket.on('message', (data, isBinary) => {
+      queue.push({ data, isBinary });
+      wake();
+    });
+    socket.on('error', (error) => {
+      settled = true;
+      queue.push({ error });
+      wake();
+    });
+    socket.on('close', () => {
+      settled = true;
+      wake();
+    });
+    socket.on('open', () => {
+      resolve({
+        send(value) {
+          socket.send(value);
+        },
+        async next() {
+          while (queue.length === 0 && !settled) await new Promise((resume) => { notify = resume; });
+          return queue.shift();
+        },
+        close() {
+          try {
+            socket.close();
+          } catch {
+            /* already closed */
+          }
+        },
+      });
+    });
+  });
+}
+
+function readJson(frame) {
+  const text = frame.isBinary ? frame.data.toString('utf8') : String(frame.data ?? '');
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    throw new Error('Bailian returned invalid JSON over the socket');
+  }
+}
+
+async function awaitEvent(channel, wanted) {
+  for (;;) {
+    const frame = await channel.next();
+    if (!frame) throw new Error(`Bailian socket closed before ${wanted}`);
+    if (frame.error) throw frame.error;
+    if (frame.isBinary) continue;
+    const message = readJson(frame);
+    const header = (message && message.header) || {};
+    if (header.event === 'task-failed') {
+      throw new Error(String(header.error_message || header.error_code || 'Paraformer task failed'));
+    }
+    if (header.event === wanted) return message;
+  }
+}
+
+async function readParaformerResult(channel) {
+  const finished = [];
+  let latest = '';
+  let duration;
+  for (;;) {
+    const frame = await channel.next();
+    if (!frame) break;
+    if (frame.error) throw frame.error;
+    if (frame.isBinary) continue;
+    const message = readJson(frame);
+    const header = message.header || {};
+    const event = header.event;
+    if (event === 'task-failed') {
+      throw new Error(String(header.error_message || header.error_code || 'Paraformer task failed'));
+    }
+    const payload = message.payload || {};
+    const output = payload.output || {};
+    const sentence = output.sentence || {};
+    if (typeof sentence.text === 'string' && sentence.text.trim()) {
+      latest = sentence.text.trim();
+      if (sentence.sentence_end === true) finished.push(latest);
+    }
+    const usage = payload.usage || {};
+    if (typeof usage.duration === 'number') duration = usage.duration;
+    if (event === 'task-finished') break;
+  }
+  const text = finished.join('').trim() || latest;
+  return { text, duration };
+}
+
+function paraformerProvider(options, readKey) {
+  const chunkBytes = options.chunkBytes ?? 3200;
+  const maxSilenceMs = options.maxSentenceSilenceMs ?? 800;
+  return {
+    name: 'bailian_paraformer_realtime',
+    async transcribe({ pcm, sampleRate = 16000, hints = [] }) {
+      if (!pcm || pcm.length === 0) throw new Error('no audio');
+      const apiKey = await readKey(options.apiKey);
+      if (!apiKey) throw new Error('Bailian ASR needs an API key');
+
+      const model = options.model ?? 'paraformer-realtime-v2';
+      const timeoutMs = options.timeoutMs ?? 60000;
+      const connect = options.connect ?? defaultConnect;
+      const taskId = globalThis.crypto?.randomUUID?.() ?? `aura-${Date.now()}`;
+
+      const parameters = {
+        format: 'pcm',
+        sample_rate: sampleRate,
+        disfluency_removal_enabled: false,
+        punctuation_prediction_enabled: true,
+        semantic_punctuation_enabled: false,
+        max_sentence_silence: maxSilenceMs,
+      };
+      const languageHints = hints.length > 0 ? hints : ['zh', 'en'];
+      if (languageHints.length > 0) parameters.language_hints = languageHints;
+
+      const channel = await connect(paraformerUrl(options.baseUrl), apiKey, timeoutMs);
+      const deadline = setTimeout(() => channel.close(), timeoutMs);
+      try {
+        channel.send(
+          JSON.stringify({
+            header: { action: 'run-task', task_id: taskId, streaming: 'duplex' },
+            payload: {
+              task_group: 'audio',
+              task: 'asr',
+              function: 'recognition',
+              model,
+              parameters,
+              input: {},
+            },
+          }),
+        );
+        await awaitEvent(channel, 'task-started');
+
+        for (let offset = 0; offset < pcm.length; offset += chunkBytes) {
+          channel.send(pcm.subarray(offset, offset + chunkBytes));
+        }
+        channel.send(
+          JSON.stringify({
+            header: { action: 'finish-task', task_id: taskId, streaming: 'duplex' },
+            payload: { input: {} },
+          }),
+        );
+
+        const { text, duration } = await readParaformerResult(channel);
+        if (!text) throw new Error('Bailian returned no transcript');
+        return { text, detail: `paraformer pcm ${pcm.length} bytes${duration ? ` duration=${duration}s` : ''}` };
+      } finally {
+        clearTimeout(deadline);
+        channel.close();
+      }
+    },
+  };
+}
+
 /**
  * @param {object} config resolved plugin config (`asr` section of the row).
  * @param {(configKey?: string) => string | Promise<string | undefined>} readKey
@@ -140,6 +332,12 @@ function bailianProvider(options, readKey) {
  */
 export function createAsr(config = {}, readKey = (configKey) => configKey || process.env.DASHSCOPE_API_KEY) {
   const merged = { ...DEFAULTS, ...config };
-  if (merged.provider === 'bailian') return bailianProvider(merged, readKey);
+  const selected = String(merged.provider || 'fake').trim();
+  if (selected === 'bailian_paraformer_realtime' || selected === 'paraformer_realtime') {
+    return paraformerProvider(merged, readKey);
+  }
+  if (selected === 'bailian_fun_flash' || selected === 'bailian') {
+    return bailianProvider(merged, readKey);
+  }
   return fakeProvider(merged);
 }
