@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.22.5';
+const AURA_VERSION = '0.22.6';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1930,11 +1930,11 @@ registerProcessor('aura-capture', AuraCapture);`;
                     type: 'button',
                     className: 'aura-icon-btn',
                     style: BUTTON,
-                    title: 'Stop',
-                    'aria-label': 'Stop',
+                    title: 'Stop this turn',
+                    'aria-label': 'Stop this turn',
                     onClick: stop,
                   },
-                  h(StopIcon, null),
+                  h(HaltIcon, null),
                 )
               : null,
           ),
@@ -2006,6 +2006,25 @@ registerProcessor('aura-capture', AuraCapture);`;
           style: { display: 'block', flex: '0 0 auto' },
         },
         h('rect', { x: 6, y: 6, width: 12, height: 12, rx: 3, fill: 'currentColor' }),
+      );
+
+    /** Stop the running turn: a square in a ring, so it never reads as the
+     * microphone's bare recording square. */
+    const HaltIcon = () =>
+      h(
+        'svg',
+        {
+          viewBox: '0 0 24 24',
+          width: 17,
+          height: 17,
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.8,
+          'aria-hidden': true,
+          style: { display: 'block', flex: '0 0 auto' },
+        },
+        h('circle', { cx: 12, cy: 12, r: 8.5, opacity: 0.55 }),
+        h('rect', { x: 8.6, y: 8.6, width: 6.8, height: 6.8, rx: 1.6, fill: 'currentColor', stroke: 'none' }),
       );
 
     /* ---- wiring --------------------------------------------------------- */
