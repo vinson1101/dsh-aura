@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
     /** Tab identity; `id` and `kind` are the same string on purpose. */
     const TAB_ID = 'dsh-aura';
 
-    const VERSION = '0.5.3';
+    const VERSION = '0.7.0';
 
     /** Set once the tab type, body and title are all registered. */
     const registrations = { ready: false };
@@ -232,6 +232,128 @@ window.__ModuleLoader__.load({
       if (!sessions || typeof sessions.binding !== 'function') return null;
       const binding = sessions.binding(sessionId);
       return binding && binding.session ? binding.session : null;
+    }
+
+    /* ---- capture and endpointing ----------------------------------------
+     *
+     * The numbers come from the Zebra voice pipeline: the bridge ends a
+     * sentence after 800 ms of silence (`max_sentence_silence`), the desktop
+     * client keeps a short pre-roll so the first phoneme survives, and both cap
+     * one utterance so a stuck microphone cannot grow without bound.
+     */
+    const SAMPLE_RATE = 16000;
+    const FRAME_MS = 20;
+    const FRAME_SIZE = (SAMPLE_RATE * FRAME_MS) / 1000;
+    const SILENCE_MS = 800;
+    const PREROLL_MS = 250;
+    const MIN_SPEECH_MS = 120;
+    const MAX_UTTERANCE_MS = 20000;
+    const ENERGY_THRESHOLD = 0.012;
+
+    /** Frame an arbitrary float stream into 20 ms blocks and cut utterances. */
+    function createVad(onUtterance) {
+      const prerollLimit = Math.round(PREROLL_MS / FRAME_MS);
+      let carry = new Float32Array(0);
+      let ring = [];
+      let frames = [];
+      let taking = false;
+      let silence = 0;
+
+      function rms(block) {
+        let sum = 0;
+        for (let i = 0; i < block.length; i += 1) sum += block[i] * block[i];
+        return Math.sqrt(sum / block.length);
+      }
+
+      function toPcm() {
+        const pcm = new Int16Array(frames.length * FRAME_SIZE);
+        let offset = 0;
+        for (const frame of frames) {
+          for (let i = 0; i < frame.length; i += 1) {
+            const value = Math.max(-1, Math.min(1, frame[i]));
+            pcm[offset + i] = value < 0 ? value * 0x8000 : value * 0x7fff;
+          }
+          offset += FRAME_SIZE;
+        }
+        return pcm;
+      }
+
+      function finish() {
+        if (!taking) return;
+        taking = false;
+        const spokenMs = frames.length * FRAME_MS;
+        const pcm = toPcm();
+        frames = [];
+        silence = 0;
+        if (spokenMs >= MIN_SPEECH_MS) onUtterance(pcm);
+      }
+
+      function take(block) {
+        const loud = rms(block) >= ENERGY_THRESHOLD;
+        if (!taking) {
+          ring.push(block);
+          if (ring.length > prerollLimit) ring.shift();
+          if (!loud) return;
+          taking = true;
+          frames = ring.slice();
+          ring = [];
+          silence = 0;
+          return;
+        }
+        frames.push(block);
+        if (loud) {
+          silence = 0;
+        } else {
+          silence += FRAME_MS;
+          if (silence >= SILENCE_MS) finish();
+        }
+        if (taking && frames.length * FRAME_MS >= MAX_UTTERANCE_MS) finish();
+      }
+
+      return {
+        push(samples) {
+          let data = samples;
+          if (carry.length) {
+            const merged = new Float32Array(carry.length + data.length);
+            merged.set(carry);
+            merged.set(data, carry.length);
+            data = merged;
+          }
+          let offset = 0;
+          while (data.length - offset >= FRAME_SIZE) {
+            take(data.subarray(offset, offset + FRAME_SIZE));
+            offset += FRAME_SIZE;
+          }
+          carry = data.slice(offset);
+        },
+        flush: finish,
+        reset() {
+          taking = false;
+          ring = [];
+          frames = [];
+          silence = 0;
+        },
+      };
+    }
+
+    /** The worklet only forwards input blocks; all decisions stay on this side. */
+    const WORKLET_SOURCE = `class AuraCapture extends AudioWorkletProcessor {
+  process(inputs) {
+    const channel = inputs[0] && inputs[0][0];
+    if (channel && channel.length) this.port.postMessage(channel.slice(0));
+    return true;
+  }
+}
+registerProcessor('aura-capture', AuraCapture);`;
+
+    /** btoa on a large buffer throws; convert in bounded slices. */
+    function toBase64(bytes) {
+      let binary = '';
+      const chunk = 0x8000;
+      for (let offset = 0; offset < bytes.length; offset += chunk) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(offset, offset + chunk));
+      }
+      return btoa(binary);
     }
 
     const PANE = {
@@ -462,6 +584,109 @@ window.__ModuleLoader__.load({
         [send],
       );
 
+      const [listening, setListening] = React.useState(false);
+      const [transcribing, setTranscribing] = React.useState(false);
+      const captureRef = React.useRef(null);
+
+      const transcribe = React.useCallback(async (pcm) => {
+        setTranscribing(true);
+        try {
+          const response = await fetch('/aura/asr', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              pcm: toBase64(new Uint8Array(pcm.buffer)),
+              sampleRate: SAMPLE_RATE,
+              channels: 1,
+            }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.error || 'speech to text failed');
+          const text = String(payload.text || '').trim();
+          if (text) setDraft((current) => (current ? current + ' ' + text : text));
+        } catch (failure) {
+          setError(String((failure && failure.message) || failure));
+        } finally {
+          setTranscribing(false);
+        }
+      }, []);
+
+      const stopCapture = React.useCallback(() => {
+        const capture = captureRef.current;
+        captureRef.current = null;
+        setListening(false);
+        if (!capture) return;
+        try {
+          capture.vad.flush();
+        } catch {
+          /* nothing to flush */
+        }
+        try {
+          capture.node.port.onmessage = null;
+          capture.source.disconnect();
+          capture.node.disconnect();
+        } catch {
+          /* already torn down */
+        }
+        try {
+          capture.audio.close();
+        } catch {
+          /* already closed */
+        }
+        for (const track of capture.stream.getTracks()) {
+          try {
+            track.stop();
+          } catch {
+            /* already stopped */
+          }
+        }
+      }, []);
+
+      React.useEffect(() => () => stopCapture(), [stopCapture]);
+
+      const startCapture = React.useCallback(async () => {
+        captureRef.current = null;
+        setError(null);
+        try {
+          const media = navigator.mediaDevices;
+          if (!media || typeof media.getUserMedia !== 'function') {
+            throw new Error('This browser exposes no microphone.');
+          }
+          const AudioCtor = window.AudioContext || window.webkitAudioContext;
+          if (!AudioCtor) throw new Error('This browser exposes no Web Audio.');
+          const stream = await media.getUserMedia({
+            audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+          });
+          const audio = new AudioCtor({ sampleRate: SAMPLE_RATE });
+          const url = URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: 'application/javascript' }));
+          try {
+            await audio.audioWorklet.addModule(url);
+          } finally {
+            URL.revokeObjectURL(url);
+          }
+          const source = audio.createMediaStreamSource(stream);
+          const node = new AudioWorkletNode(audio, 'aura-capture');
+          const sink = audio.createGain();
+          sink.gain.value = 0;
+          source.connect(node);
+          node.connect(sink);
+          sink.connect(audio.destination);
+          const vad = createVad((pcm) => {
+            void transcribe(pcm);
+          });
+          node.port.onmessage = (event) => vad.push(event.data);
+          captureRef.current = { stream, audio, source, node, sink, vad };
+          setListening(true);
+        } catch (failure) {
+          setError(String((failure && failure.message) || failure));
+        }
+      }, [transcribe]);
+
+      const toggleMic = React.useCallback(() => {
+        if (captureRef.current) stopCapture();
+        else void startCapture();
+      }, [startCapture, stopCapture]);
+
       return h(
         'div',
         { style: PANE, 'data-aura-phase': phase },
@@ -470,7 +695,7 @@ window.__ModuleLoader__.load({
           { style: STAGE, role: 'img', 'aria-label': `Aura ${phase}` },
           h('canvas', { ref: canvasRef, style: CANVAS }),
         ),
-        h('div', { style: CAPTION }, phase),
+        h('div', { style: CAPTION }, listening ? 'listening' : transcribing ? 'transcribing' : phase),
         h(
           'div',
           { style: FOOTER },
@@ -486,6 +711,17 @@ window.__ModuleLoader__.load({
               onChange: (event) => setDraft(event.target.value),
               onKeyDown,
             }),
+            h(
+              'button',
+              {
+                type: 'button',
+                style: BUTTON,
+                title: listening ? 'Stop listening' : 'Start listening',
+                'aria-label': listening ? 'Stop listening' : 'Start listening',
+                onClick: toggleMic,
+              },
+              listening ? '●' : '○',
+            ),
             h(
               'button',
               {

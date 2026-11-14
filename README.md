@@ -52,9 +52,11 @@ work. The tab is also listed in the right bar's own picker.
       button, and keep it resident beside the conversation.
 - [x] **v0.3 — drive.** A composer that sends into the current session
       (`prompt`, queue mode) and a stop control (`cancel`).
-- [ ] **v0.3 — ears.** Microphone capture with local VAD, speech-to-text, and a
-      message sent into the current session.
+- [x] **v0.3 — ears.** Microphone capture, energy endpointing, speech-to-text,
+      and the transcript placed in the composer.
 - [ ] **v0.4 — voice.** Spoken replies with streaming TTS, sentence by sentence.
+- [ ] **v0.4a — streaming ears.** Cut the 800 ms wait by streaming PCM to a
+      realtime provider; the endpointing contract stays the same.
 - [ ] **v0.5 — interruption.** Speaking while the agent runs cancels the turn
       (`ISession.cancel()`) and steers the new request in (`mode: 'steer'`).
 - [ ] **v0.6 — face.** Expressions and gestures driven by the phase and by the
