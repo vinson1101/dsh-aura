@@ -45,8 +45,10 @@ window.cancelAnimationFrame = (id) => window.clearTimeout(id);
 
 /* Audio playback seam: record the buffer that was started. */
 const played = [];
+let contextCount = 0;
 class AudioContextStub {
   constructor(options = {}) {
+    contextCount += 1;
     this.sampleRate = options.sampleRate || 48000;
     this.destination = {};
   }
@@ -318,6 +320,35 @@ assert.equal(ttsBodies.length, 1, 'a settled run is spoken once');
     ttsBodies.every((body) => body.text !== replyText),
     'a streamed reply is not spoken again at the end',
   );
+}
+
+/* ---- several sentences never open several players ---------------------- */
+
+{
+  const textarea3 = container.querySelector('textarea');
+  const setValue3 = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+  setValue3.call(textarea3, '再来一次');
+  textarea3.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  container.querySelector('button[aria-label="Send"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const before = contextCount;
+  running = true;
+  render();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  /* Three completed sentences in one delta: they must share one player. */
+  eventSource.pushLive('一。二。三。');
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  /* A player may already exist from the previous utterance; what must not
+   * happen is one player per sentence. */
+  assert.ok(contextCount - before <= 1, "one player for the whole utterance, got " + (contextCount - before));
+
+  replyText = '一。二。三。';
+  eventSource.finish(replyText);
+  running = false;
+  render();
+  await new Promise((resolve) => setTimeout(resolve, 300));
 }
 
 root.unmount();

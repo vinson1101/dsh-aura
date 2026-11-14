@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.22.1';
+const AURA_VERSION = '0.22.2';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1097,6 +1097,7 @@ registerProcessor('aura-capture', AuraCapture);`;
 
       /** Stop playback and let the sphere settle. */
       const stopSpeaking = React.useCallback(() => {
+        speakGeneration.current += 1;
         const playback = voiceRef.current;
         voiceRef.current = null;
         levelRef.current = 0;
@@ -1121,10 +1122,18 @@ registerProcessor('aura-capture', AuraCapture);`;
       }, []);
 
       /** Speak one reply: whole utterance, metered into the sphere. */
-      const speak = React.useCallback(
-        async (text, voice) => {
+      /* speak() is async, so three segments queued in a row could each find no
+       * player yet and build their own: three contexts, three overlapping
+       * voices. Serialise them, and stamp each with a generation so a stopped
+       * turn's queued work is discarded rather than played. */
+      const speakQueue = React.useRef(Promise.resolve());
+      const speakGeneration = React.useRef(0);
+
+      const speakNow = React.useCallback(
+        async (text, voice, generation) => {
           const spoken = String(text || '').trim();
           if (!spoken) return;
+          if (generation !== speakGeneration.current) return;
           try {
             diag('tts_request', { chars: spoken.length });
             const response = await fetch('/aura/tts', {
@@ -1137,6 +1146,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               throw new Error(failure.error || 'speech synthesis failed');
             }
 
+            if (generation !== speakGeneration.current) return;
             const rate = Number(response.headers.get('x-aura-sample-rate')) || SAMPLE_RATE;
             const AudioCtor = window.AudioContext || window.webkitAudioContext;
             if (!AudioCtor) throw new Error('This browser exposes no Web Audio.');
@@ -1198,7 +1208,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             gateRef.current.active = true;
             setTalking(true);
             if (!existing) playback.frame = window.requestAnimationFrame(meter);
-            diag('play_start', { state: audio.state, rate });
+            if (!existing) diag('play_start', { state: audio.state, rate });
 
             const reader = response.body.getReader();
             let carry = new Uint8Array(0);
@@ -1230,6 +1240,17 @@ registerProcessor('aura-capture', AuraCapture);`;
           }
         },
         [stopSpeaking],
+      );
+
+      const speak = React.useCallback(
+        (text, voice) => {
+          const generation = speakGeneration.current;
+          speakQueue.current = speakQueue.current
+            .then(() => speakNow(text, voice, generation))
+            .catch(() => {});
+          return speakQueue.current;
+        },
+        [speakNow],
       );
 
       React.useEffect(() => () => stopSpeaking(), [stopSpeaking]);
