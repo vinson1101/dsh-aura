@@ -168,6 +168,10 @@ assert.equal(pane.component.name, 'AuraPane');
 /* The running version must be readable without hovering: a stale page and a
  * broken feature look identical otherwise. */
 assert.match(container.textContent, /v\d+\.\d+\.\d+/, 'the pane must show its version');
+assert.ok(
+  container.querySelector('button[aria-label="Force reload"]'),
+  'the reload control must sit beside the version',
+);
 
 const canvas = container.querySelector('canvas');
 assert.ok(canvas, 'the pane must contain a canvas; rendered instead: ' + text.slice(0, 400));

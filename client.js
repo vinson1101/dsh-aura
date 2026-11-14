@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.15.1';
+const AURA_VERSION = '0.15.2';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -465,6 +465,23 @@ registerProcessor('aura-capture', AuraCapture);`;
       opacity: 0.38,
       color: 'var(--dsw-alias-text-secondary, inherit)',
       userSelect: 'text',
+    };
+    /* Deliberately quiet: it sits beside the version, not in the composer row. */
+    const RELOAD = {
+      display: 'grid',
+      placeItems: 'center',
+      width: 18,
+      height: 16,
+      marginLeft: 4,
+      padding: 0,
+      border: 'none',
+      borderRadius: 4,
+      background: 'transparent',
+      color: 'var(--dsw-alias-text-secondary, inherit)',
+      opacity: 0.45,
+      fontSize: 12,
+      lineHeight: 1,
+      cursor: 'pointer',
     };
     const STAGE = {
       width: '100%',
@@ -1092,6 +1109,17 @@ registerProcessor('aura-capture', AuraCapture);`;
           'div',
           { style: HEADER },
           h('span', { style: VERSION_LABEL, title: 'dsh-aura version' }, `v${AURA_VERSION}`),
+          h(
+            'button',
+            {
+              type: 'button',
+              style: RELOAD,
+              title: `Force reload · installed build may be newer than v${AURA_VERSION}`,
+              'aria-label': 'Force reload',
+              onClick: () => window.location.reload(),
+            },
+            '⟳',
+          ),
         ),
         h(
           'div',
@@ -1140,17 +1168,6 @@ registerProcessor('aura-capture', AuraCapture);`;
                 onClick: () => void speak('你好，我是 Aura。现在可以听到我说话。'),
               },
               '🔊 试听',
-            ),
-            h(
-              'button',
-              {
-                type: 'button',
-                style: BUTTON,
-                title: 'Reload the page',
-                'aria-label': 'Reload the page',
-                onClick: () => window.location.reload(),
-              },
-              '⟳',
             ),
             h(
               'button',
