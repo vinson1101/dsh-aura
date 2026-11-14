@@ -82,7 +82,7 @@ function bailianProvider(options, readKey) {
     name: 'bailian',
     async transcribe({ pcm, sampleRate = 16000, channels = 1, hints = [], signal }) {
       if (!pcm || pcm.length === 0) throw new Error('no audio');
-      const apiKey = readKey();
+      const apiKey = await readKey(options.apiKey);
       if (!apiKey) throw new Error('Bailian ASR needs an API key');
 
       const wav = pcm16ToWav(pcm, sampleRate, channels);
@@ -135,9 +135,10 @@ function bailianProvider(options, readKey) {
 
 /**
  * @param {object} config resolved plugin config (`asr` section of the row).
- * @param {() => string | undefined} readKey returns the API key from config or env.
+ * @param {(configKey?: string) => string | Promise<string | undefined>} readKey
+ *   resolves the provider key per request; see `secrets.js`.
  */
-export function createAsr(config = {}, readKey = () => process.env.DASHSCOPE_API_KEY) {
+export function createAsr(config = {}, readKey = (configKey) => configKey || process.env.DASHSCOPE_API_KEY) {
   const merged = { ...DEFAULTS, ...config };
   if (merged.provider === 'bailian') return bailianProvider(merged, readKey);
   return fakeProvider(merged);

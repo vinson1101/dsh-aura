@@ -16,7 +16,9 @@
 import { appendFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { createAsr } from './asr.js';
+import { createKeyReader } from './secrets.js';
 
 export const inject = ['webServer'];
 
@@ -25,6 +27,8 @@ const MAX_LINES = 2000;
 /** Cap one recording: a minute of 16 kHz mono PCM16 is under 2 MiB. */
 const MAX_PCM_BYTES = 8 * 1024 * 1024;
 const MAX_BODY_BYTES = 12 * 1024 * 1024;
+/** Credential record this plugin owns, as `<scope>/<id>`. */
+const CREDENTIAL_KEY = 'dsh-aura/asr';
 
 function dshHome() {
   return process.env.DSH_HOME || path.join(homedir(), '.dsh');
@@ -74,7 +78,15 @@ function sendJson(res, status, value) {
 
 export function apply(ctx, config = {}) {
   const asrConfig = config.asr || {};
-  const asr = createAsr(asrConfig, () => asrConfig.apiKey || process.env.DASHSCOPE_API_KEY);
+  const readKey = createKeyReader({
+    readRecord: async () => {
+      const credentials = ctx.get('credentials');
+      if (!credentials || typeof credentials.readRecord !== 'function') return undefined;
+      return credentials.readRecord(CREDENTIAL_KEY);
+    },
+    readSecretsFile: () => readFile(path.join(dshHome(), 'aura-secrets.env'), 'utf8'),
+  });
+  const asr = createAsr(asrConfig, readKey);
 
   ctx.effect(
     () =>

@@ -96,6 +96,26 @@ plugin that is not installed, and the renderer console cannot be read from outsi
 the app, so this file is the only way to tell those two apart. The host half needs
 a DSH restart to serve the route; the browser half is picked up on reload.
 
+## Credentials
+
+The provider key is never committed and never reaches the browser. It resolves
+per request, so a rotated key applies to the next utterance without a restart:
+
+1. the plugin row's `asr.apiKey` (a literal, for a throwaway profile)
+2. the DSH credential record `dsh-aura/asr`
+3. the environment (`DASHSCOPE_API_KEY`, or the bridge's `XOB_BAILIAN_API_KEY`)
+4. `$DSH_HOME/aura-secrets.env`, the `.env` convention the Zebra bridge uses
+
+The file is the recommended place for a machine-local key:
+
+```sh
+install -m 600 /dev/null "$HOME/.dsh/aura-secrets.env"
+printf 'DASHSCOPE_API_KEY=...\n' >> "$HOME/.dsh/aura-secrets.env"
+```
+
+`test/secrets.test.mjs` also scans this repository for key-shaped strings and
+fails the suite if one appears.
+
 ## Design notes
 
 The presence paints into `shell.overlay`, the frame-wide layer that is
