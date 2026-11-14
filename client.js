@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.20.4';
+const AURA_VERSION = '0.20.5';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -540,12 +540,14 @@ registerProcessor('aura-capture', AuraCapture);`;
       cursor: 'pointer',
     };
     const STYLE = `
-      .aura-top { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-height: 46px; }
+      .aura-top { display: flex; align-items: center; justify-content: flex-end; gap: 4px;
+        min-height: 46px; min-width: 0; max-width: 100%; }
       .aura-chip { display: inline-flex; align-items: center; gap: 10px; padding: 3px 12px 3px 3px;
         border: 1px solid rgba(160, 170, 190, .16); border-radius: 999px;
         background: rgba(120, 132, 152, .12); backdrop-filter: blur(10px);
         color: inherit;
         font: inherit; font-size: 20px; font-weight: 500; letter-spacing: -.01em;
+        max-width: 100%; min-width: 0; overflow: hidden;
         cursor: pointer; transition: background .15s ease, border-color .15s ease; }
       .aura-chip:hover { background: rgba(127,127,127,.14); border-color: rgba(127,127,127,.22); }
       .aura-chip[aria-expanded='true'] { background: rgba(127,127,127,.16); border-color: rgba(127,127,127,.28); }
@@ -579,6 +581,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         opacity: .45; cursor: pointer; }
       .aura-close:hover { opacity: 1; background: rgba(127,127,127,.16); }
       .aura-id img, .aura-id .aura-ava-fallback { width: 42px; height: 42px; font-size: 17px; }
+      .aura-chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .aura-name { font-size: 15px; font-weight: 600; letter-spacing: .01em;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .aura-sub { font-size: 11px; color: var(--dsw-alias-label-tertiary, inherit); opacity: .8; margin-top: 2px; }
@@ -916,6 +919,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       const [prefs, setPrefs] = React.useState(readPrefs);
       const [panelOpen, setPanelOpen] = React.useState(false);
       const [customVoice, setCustomVoice] = React.useState('');
+      const paneRef = React.useRef(null);
       const prefsRef = React.useRef(prefs);
       prefsRef.current = prefs;
       const cardRef = React.useRef(null);
@@ -975,6 +979,7 @@ registerProcessor('aura-capture', AuraCapture);`;
           }
 
           diag('card_style', {
+            paneWidth: paneRef.current ? paneRef.current.clientWidth : -1,
             cards: cards.length,
             sheets,
             rules,
@@ -1472,7 +1477,7 @@ registerProcessor('aura-capture', AuraCapture);`;
 
       return h(
         'div',
-        { style: PANE, 'data-aura-phase': phase },
+        { style: PANE, 'data-aura-phase': phase, ref: paneRef },
         h('style', null, STYLE),
         h(
           'div',
