@@ -27,6 +27,30 @@ Two facts worth keeping:
    list (selector, colour, `!important`) is the way to name that rule; it was
    written but never read before the work was parked.
 
+## Root cause (found in v0.19.8)
+
+The `card_style` beacon reports the stylesheet rules that match the element and
+set a background. It named this one:
+
+```css
+body[data-we-glass-page][data-we-floater-solid]
+  :where([role="dialog"]):not([data-we-surface-runtime]):not(...)
+  { background-color: var(--we-readability-base, #ffffff) !important }
+```
+
+A wallpaper glass plugin repaints **every `[role="dialog"]`** with an opaque
+readability colour and `!important`. The card carried that role, so its own
+translucent fill never applied. That is why six different colour attempts looked
+identical: none of them reached the element.
+
+The card is a popover inside a side pane, not a modal dialog. It now uses
+`role="group"` with a descriptive label — which suits its behaviour — and the
+forced repaint no longer matches.
+
+**Lesson:** when a colour change has no visible effect, read the winning rule
+before touching the colour. `getComputedStyle` alone shows the result, not the
+source.
+
 ## What to do next time
 
 1. Open the card once and read `card_style` from `$DSH_HOME/aura-diag.jsonl`.
