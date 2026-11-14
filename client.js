@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.19.6';
+const AURA_VERSION = '0.19.7';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -541,7 +541,9 @@ registerProcessor('aura-capture', AuraCapture);`;
     const STYLE = `
       .aura-top { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-height: 60px; }
       .aura-chip { display: inline-flex; align-items: center; gap: 16px; padding: 4px 14px 4px 4px;
-        border: 1px solid transparent; border-radius: 999px; background: transparent; color: inherit;
+        border: 1px solid rgba(160, 170, 190, .16); border-radius: 999px;
+        background: rgba(120, 132, 152, .12); backdrop-filter: blur(10px);
+        color: inherit;
         font: inherit; font-size: 28px; font-weight: 500; letter-spacing: -.01em;
         cursor: pointer; transition: background .15s ease, border-color .15s ease; }
       .aura-chip:hover { background: rgba(127,127,127,.14); border-color: rgba(127,127,127,.22); }
@@ -557,10 +559,18 @@ registerProcessor('aura-capture', AuraCapture);`;
       /* Self-contained glass: the plugin decides its own translucency, so it
        * looks the same in a bare profile as in a decorated one. The theme
        * colour is used only as the tint; the alpha is ours. */
+      /* Same ingredients as the chip above it: a neutral colour, an alpha, and
+       * a blur. The theme's surface tokens are opaque, which is why the card
+       * stayed dark while the chip looked like glass. */
       .aura-card { position: absolute; top: 74px; right: 8px; width: 276px; padding: 14px;
       max-height: calc(100% - 82px); overflow-y: auto; overscroll-behavior: contain;
-      display: grid; gap: 12px; border-radius: 14px; border: 1px solid rgba(127,127,127,.24);
-      background: var(--dsw-alias-bg-base, #191b21); box-shadow: 0 18px 44px rgba(0,0,0,.34); z-index: 6; }
+      display: grid; gap: 12px; border-radius: 14px;
+      border: 1px solid rgba(160, 170, 190, .22);
+      background: rgba(120, 132, 152, .18);
+      backdrop-filter: blur(22px) saturate(160%);
+      -webkit-backdrop-filter: blur(22px) saturate(160%);
+      box-shadow: 0 20px 48px rgba(0, 0, 0, .36), inset 0 1px 0 rgba(255, 255, 255, .12);
+      z-index: 6; }
       .aura-id { display: flex; align-items: center; gap: 10px; }
       .aura-close { margin-left: auto; width: 24px; height: 24px; border-radius: 999px; border: none;
         background: transparent; color: inherit; font: inherit; font-size: 14px; line-height: 1;
