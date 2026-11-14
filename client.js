@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.18.8';
+const AURA_VERSION = '0.18.9';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -880,6 +880,20 @@ registerProcessor('aura-capture', AuraCapture);`;
        * a trap. Close on a pointer press anywhere outside it, and on Escape. */
       React.useEffect(() => {
         if (!panelOpen) return undefined;
+        /* The glass look is decided by the browser, not by this source file: a
+         * var() that fails to substitute and a backdrop filter that the
+         * compositor drops both look like "nothing changed". Report the
+         * computed values so the next question is answered by data. */
+        window.setTimeout(() => {
+          const card = cardRef.current;
+          if (!card) return;
+          const style = window.getComputedStyle(card);
+          diag('card_style', {
+            background: style.backgroundColor,
+            backdrop: style.backdropFilter || style.webkitBackdropFilter || '',
+            opacity: style.opacity,
+          });
+        }, 120);
         const onPointerDown = (event) => {
           const card = cardRef.current;
           if (card && !card.contains(event.target)) setPanelOpen(false);
@@ -900,7 +914,8 @@ registerProcessor('aura-capture', AuraCapture);`;
         const merged = { ...prefsRef.current, ...next };
         setPrefs(merged);
         writePrefs(merged);
-        setPanelOpen(false);
+        /* Deliberately does not close: picking a voice to compare a few of them
+         * should not dismiss the panel under the pointer. */
       }, []);
 
       /** Keep the avatar small: it is stored in localStorage, not on the host. */
