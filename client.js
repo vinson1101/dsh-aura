@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.15.0';
+const AURA_VERSION = '0.15.1';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -446,12 +446,26 @@ registerProcessor('aura-capture', AuraCapture);`;
       height: '100%',
       minHeight: 0,
       display: 'grid',
-      gridTemplateRows: '1fr auto auto',
+      gridTemplateRows: 'auto 1fr auto auto',
       gap: 10,
       padding: 16,
       boxSizing: 'border-box',
     };
     /* The stage only centres; the form squares the canvas inside it. */
+    const HEADER = {
+      display: 'flex',
+      justifyContent: 'flex-end',
+      alignItems: 'center',
+      minHeight: 16,
+    };
+    const VERSION_LABEL = {
+      fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+      fontSize: 10,
+      letterSpacing: '0.04em',
+      opacity: 0.38,
+      color: 'var(--dsw-alias-text-secondary, inherit)',
+      userSelect: 'text',
+    };
     const STAGE = {
       width: '100%',
       height: '100%',
@@ -1076,6 +1090,11 @@ registerProcessor('aura-capture', AuraCapture);`;
         { style: PANE, 'data-aura-phase': phase },
         h(
           'div',
+          { style: HEADER },
+          h('span', { style: VERSION_LABEL, title: 'dsh-aura version' }, `v${AURA_VERSION}`),
+        ),
+        h(
+          'div',
           { style: STAGE, role: 'img', 'aria-label': `Aura ${phase}` },
           h('canvas', { ref: canvasRef, style: CANVAS }),
         ),
@@ -1163,7 +1182,10 @@ registerProcessor('aura-capture', AuraCapture);`;
 
     /** The tab chip's title. */
     function TabTitle() {
-      return h('span', null, 'Aura');
+      return h('span', { style: { display: 'inline-flex', gap: 6, alignItems: 'baseline' } },
+        'Aura',
+        h('span', { style: VERSION_LABEL }, AURA_VERSION),
+      );
     }
 
     /* ---- wiring --------------------------------------------------------- */

@@ -165,6 +165,10 @@ assert.ok(
 );
 assert.equal(pane.component.name, 'AuraPane');
 
+/* The running version must be readable without hovering: a stale page and a
+ * broken feature look identical otherwise. */
+assert.match(container.textContent, /v\d+\.\d+\.\d+/, 'the pane must show its version');
+
 const canvas = container.querySelector('canvas');
 assert.ok(canvas, 'the pane must contain a canvas; rendered instead: ' + text.slice(0, 400));
 /* The bug this guards: a non-square element let the browser stretch a square
