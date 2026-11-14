@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.23.0';
+const AURA_VERSION = '0.23.1';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -403,6 +403,14 @@ window.__ModuleLoader__.load({
 registerProcessor('aura-capture', AuraCapture);`;
 
     /** Known-good CosyVoice ids from the Zebra voice path; others can be typed. */
+    /* v3.5-flash is cheaper per character ($0.116 vs $0.14335 per 10k) but it
+     * rejects every system voice id with an engine 418: it only speaks with a
+     * cloned or designed voice, whose id looks like cosyvoice-v3.5-flash-xxxx. */
+    const MODELS = [
+      { id: 'cosyvoice-v3-flash', name: '3.0', note: '系统音色' },
+      { id: 'cosyvoice-v3.5-flash', name: '3.5', note: '需复刻音色' },
+    ];
+
     /* Every voice below was probed against cosyvoice-v3-flash with this
      * account and returned audio; the traits come from the provider's voice
      * list. Anything not on this list was rejected with "Invalid voice". */
@@ -437,10 +445,11 @@ registerProcessor('aura-capture', AuraCapture);`;
         const parsed = raw ? JSON.parse(raw) : {};
         return {
           voice: typeof parsed.voice === 'string' ? parsed.voice : VOICES[0].id,
+          model: MODELS.some((item) => item.id === parsed.model) ? parsed.model : MODELS[0].id,
           avatar: typeof parsed.avatar === 'string' ? parsed.avatar : '',
         };
       } catch {
-        return { voice: VOICES[0].id, avatar: '' };
+        return { voice: VOICES[0].id, avatar: '', model: MODELS[0].id };
       }
     }
 
@@ -618,6 +627,12 @@ registerProcessor('aura-capture', AuraCapture);`;
       .aura-trait { font-size: 10px; margin-left: 6px; color: var(--dsw-alias-label-tertiary, inherit); opacity: .75; }
       .aura-tag { font-size: 9px; margin-left: 6px; padding: 1px 5px; border-radius: 5px;
         background: rgba(127,127,127,.2); opacity: .8; }
+      .aura-models { display: flex; gap: 6px; margin: 2px 0 8px; }
+      .aura-model { height: 26px; min-width: 44px; padding: 0 10px; border-radius: 8px;
+        border: 1px solid rgba(255,255,255,.16); background: transparent; color: inherit;
+        font: inherit; font-size: 12px; cursor: pointer; opacity: .7; }
+      .aura-model[data-on='true'] { opacity: 1; border-color: rgba(255,255,255,.4);
+        background: rgba(255,255,255,.12); }
       .aura-voices { max-height: 216px; overflow-y: auto; overscroll-behavior: contain;
         margin: 0 -6px; padding: 0 6px; }
       .aura-act { height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,.16);
@@ -1182,7 +1197,11 @@ registerProcessor('aura-capture', AuraCapture);`;
             const response = await fetch('/aura/tts', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ text: spoken.slice(0, 2000), voice: voice || prefsRef.current.voice }),
+              body: JSON.stringify({
+                text: spoken.slice(0, 2000),
+                voice: voice || prefsRef.current.voice,
+                model: prefsRef.current.model || MODELS[0].id,
+              }),
             });
             if (!response.ok) {
               const failure = await response.json().catch(() => ({}));
@@ -1787,6 +1806,24 @@ registerProcessor('aura-capture', AuraCapture);`;
               h(
                 'div',
                 null,
+                h(
+                  'div',
+                  { className: 'aura-models' },
+                  ...MODELS.map((entry) =>
+                    h(
+                      'button',
+                      {
+                        type: 'button',
+                        key: entry.id,
+                        className: 'aura-model',
+                        'data-on': String((prefs.model || MODELS[0].id) === entry.id),
+                        title: `${entry.id} · ${entry.note}`,
+                        onClick: () => choose({ model: entry.id }),
+                      },
+                      entry.name,
+                    ),
+                  ),
+                ),
                 h('div', { className: 'aura-cap' }, '声音'),
                 h('div', { className: 'aura-voices' },
                 ...VOICES.map((voice) =>

@@ -393,6 +393,10 @@ export function apply(ctx, config = {}) {
            * forwarded to the provider. */
           const requestedVoice = String(request.voice || '').trim();
           const voice = /^[A-Za-z0-9_.-]{1,64}$/.test(requestedVoice) ? requestedVoice : undefined;
+          /* Only the models this plugin knows about are forwarded. v3.5-flash is
+           * cheaper per character but rejects system voice ids. */
+          const requestedModel = String(request.model || '').trim();
+          const model = /^cosyvoice-v3(\.5)?-flash$/.test(requestedModel) ? requestedModel : undefined;
           if (!text) {
             sendJson(res, 400, { error: 'no text' });
             return;
@@ -412,6 +416,7 @@ export function apply(ctx, config = {}) {
             const segments = textSegments(spoken, 60);
             for (const segment of segments) {
               await tts.stream({
+                model,
                 text: segment,
                 voice,
                 onChunk: (chunk) => {

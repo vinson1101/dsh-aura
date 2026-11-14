@@ -196,7 +196,8 @@ export function speakablePrefix(text, maxChars = 240) {
  * there, because the stream after it is continuous PCM.
  */
 export async function streamSynthesize(options) {
-  const { text, apiKey, baseUrl, model, voice, sampleRate, timeoutMs, signal, onChunk } = options;
+  const { text, apiKey, baseUrl, voice, sampleRate, timeoutMs, signal, onChunk } = options;
+  const model = options.model || 'cosyvoice-v3-flash';
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(), timeoutMs);
   const composed = signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal;
@@ -249,6 +250,13 @@ export async function streamSynthesize(options) {
 }
 
 export function createTts(config = {}, readKey = async (configKey) => configKey) {
+  /**
+   * The models this plugin will call. v3.5-flash is cheaper per character but
+   * rejects system voice ids, so it only works with a cloned or designed voice.
+   */
+  const MODELS = ['cosyvoice-v3-flash', 'cosyvoice-v3.5-flash'];
+  const modelOf = (requested) => (MODELS.includes(requested) ? requested : merged.model);
+
   const merged = { ...DEFAULTS, ...config };
   const DEFAULTS_MAX = 300;
 
@@ -260,9 +268,10 @@ export function createTts(config = {}, readKey = async (configKey) => configKey)
       const apiKey = await readKey(merged.apiKey);
       if (!apiKey) throw new Error('Bailian TTS needs an API key');
       return streamSynthesize({
+        model: modelOf(options.model),
         apiKey,
         baseUrl: merged.baseUrl,
-        model: merged.model,
+        model: modelOf(model),
         voice: options.voice || merged.voice,
         sampleRate: merged.sampleRate,
         timeoutMs: merged.timeoutMs,
@@ -271,7 +280,7 @@ export function createTts(config = {}, readKey = async (configKey) => configKey)
         onChunk: options.onChunk,
       });
     },
-    async synthesize({ text, voice, signal }) {
+    async synthesize({ text, voice, signal, model }) {
       const { spoken, truncated } = speakablePrefix(text, merged.maxChars ?? 300);
       if (!spoken) throw new Error('no text');
       const apiKey = await readKey(merged.apiKey);
@@ -317,7 +326,7 @@ export function createTts(config = {}, readKey = async (configKey) => configKey)
         return {
           pcm,
           sampleRate: merged.sampleRate,
-          model: merged.model,
+          model: modelOf(model),
           voice: voice || merged.voice,
           spoken: spoken.length,
           truncated,
