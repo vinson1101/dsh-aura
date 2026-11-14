@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.24.2';
+const AURA_VERSION = '0.24.3';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -53,10 +53,40 @@ window.__ModuleLoader__.load({
         try {
           const response = await fetch('/aura/version', { cache: 'no-store' });
           const payload = await response.json();
-          if (payload && payload.version && payload.version !== AURA_VERSION) {
-            diag('reload_for_version', { running: AURA_VERSION, installed: payload.version });
+          const installed = payload && payload.version;
+          if (installed && installed !== AURA_VERSION) {
+            /* Reload once per target version. The host serves the client bundle
+             * it read at startup, so if the reload comes back on the same
+             * version the bundle cannot be newer no matter how often we try —
+             * that is a plugin reload on the host side, not a page refresh. */
+            const KEY = 'dsh-aura.reloaded-for';
+            let attempted = '';
+            try {
+              attempted = window.sessionStorage.getItem(KEY) || '';
+            } catch {
+              /* private mode */
+            }
+            if (attempted === installed) {
+              diag('reload_blocked', { running: AURA_VERSION, installed });
+              window.dispatchEvent(
+                new window.CustomEvent('aura:stale-bundle', { detail: { running: AURA_VERSION, installed } }),
+              );
+              window.setTimeout(tick, 30000);
+              return;
+            }
+            try {
+              window.sessionStorage.setItem(KEY, installed);
+            } catch {
+              /* private mode: at most one attempt anyway */
+            }
+            diag('reload_for_version', { running: AURA_VERSION, installed });
             window.location.reload();
             return;
+          }
+          try {
+            window.sessionStorage.removeItem('dsh-aura.reloaded-for');
+          } catch {
+            /* ignore */
           }
         } catch {
           /* the host is restarting; try again next tick */
