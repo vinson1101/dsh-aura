@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.20.5';
+const AURA_VERSION = '0.20.6';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -609,17 +609,19 @@ registerProcessor('aura-capture', AuraCapture);`;
       .aura-foot button:hover { background: rgba(127,127,127,.16); }
       /* Below these widths the parts stop fitting side by side. Drop the words
        * that repeat what the glyph already says, and keep every control. */
-      @container (max-width: 340px) {
+      /* The pane is 300px at its narrowest and 680px at its widest, so the
+       * tiers sit inside that range rather than below it. */
+      @container (max-width: 380px) {
         .aura-btn-text { display: none; }
         /* Icon-only: square, so the glyph is centred rather than padded. */
         .aura-icon-btn { min-width: 38px; padding: 0; }
       }
-      @container (max-width: 260px) {
+      @container (max-width: 240px) {
         .aura-chip-text { display: none; }
       }
       /* Narrow card: a field and its button no longer fit side by side, and the
        * mono detail line is the first thing to give way. */
-      @container (max-width: 250px) {
+      @container (max-width: 340px) {
         .aura-card { padding: 10px; gap: 8px; }
         .aura-id-mono { display: none; }
         .aura-stack { flex-wrap: wrap; }
