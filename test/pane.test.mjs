@@ -180,6 +180,19 @@ assert.ok(
   'the reload control must be inside the card',
 );
 
+/* A popover you can only close by finding an uncovered spot is a trap. */
+window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+await new Promise((resolve) => setTimeout(resolve, 20));
+assert.equal(container.querySelector('.aura-card'), null, 'Escape must close the card');
+
+container.querySelector('button[aria-label="Aura profile"]').click();
+await new Promise((resolve) => setTimeout(resolve, 20));
+assert.ok(container.querySelector('.aura-card'), 'the card reopens');
+
+window.document.dispatchEvent(new window.Event('pointerdown', { bubbles: true }));
+await new Promise((resolve) => setTimeout(resolve, 20));
+assert.equal(container.querySelector('.aura-card'), null, 'a press outside must close the card');
+
 const canvas = container.querySelector('canvas');
 assert.ok(canvas, 'the pane must contain a canvas; rendered instead: ' + text.slice(0, 400));
 /* The bug this guards: a non-square element let the browser stretch a square

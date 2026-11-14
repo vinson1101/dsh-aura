@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.17.0';
+const AURA_VERSION = '0.17.1';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -549,6 +549,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       .aura-ava-fallback { width: 22px; height: 22px; border-radius: 999px; display: grid; place-items: center;
         font-size: 11px; font-weight: 600; color: #cfe4ff; background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
       .aura-card { position: absolute; top: 34px; right: 8px; width: 276px; padding: 14px;
+        max-height: calc(100% - 42px); overflow-y: auto; overscroll-behavior: contain;
         display: grid; gap: 12px; border-radius: 14px; border: 1px solid rgba(127,127,127,.24);
         background: var(--dsw-alias-bg-base, #191b21); box-shadow: 0 18px 44px rgba(0,0,0,.34); z-index: 6; }
       .aura-id { display: flex; align-items: center; gap: 10px; }
@@ -854,12 +855,33 @@ registerProcessor('aura-capture', AuraCapture);`;
       const [customVoice, setCustomVoice] = React.useState('');
       const prefsRef = React.useRef(prefs);
       prefsRef.current = prefs;
+      const cardRef = React.useRef(null);
+
+      /* A popover that can only be closed by hitting what it does not cover is
+       * a trap. Close on a pointer press anywhere outside it, and on Escape. */
+      React.useEffect(() => {
+        if (!panelOpen) return undefined;
+        const onPointerDown = (event) => {
+          const card = cardRef.current;
+          if (card && !card.contains(event.target)) setPanelOpen(false);
+        };
+        const onKeyDown = (event) => {
+          if (event.key === 'Escape') setPanelOpen(false);
+        };
+        document.addEventListener('pointerdown', onPointerDown, true);
+        document.addEventListener('keydown', onKeyDown, true);
+        return () => {
+          document.removeEventListener('pointerdown', onPointerDown, true);
+          document.removeEventListener('keydown', onKeyDown, true);
+        };
+      }, [panelOpen]);
       const captureRef = React.useRef(null);
 
       const choose = React.useCallback((next) => {
         const merged = { ...prefsRef.current, ...next };
         setPrefs(merged);
         writePrefs(merged);
+        setPanelOpen(false);
       }, []);
 
       /** Keep the avatar small: it is stored in localStorage, not on the host. */
@@ -1341,7 +1363,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         panelOpen
           ? h(
               'div',
-              { className: 'aura-card' },
+              { className: 'aura-card', ref: cardRef, role: 'dialog', 'aria-label': 'Aura' },
               h(
                 'div',
                 { className: 'aura-id' },
