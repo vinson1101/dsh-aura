@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
     /** Tab identity; `id` and `kind` are the same string on purpose. */
     const TAB_ID = 'dsh-aura';
 
-    const VERSION = '0.7.0';
+    const VERSION = '0.9.0';
 
     /** Set once the tab type, body and title are all registered. */
     const registrations = { ready: false };
@@ -384,6 +384,10 @@ registerProcessor('aura-capture', AuraCapture);`;
       opacity: 0.55,
       color: 'var(--dsw-alias-text-secondary, inherit)',
       userSelect: 'none',
+      maxWidth: '100%',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
     };
 
     const FOOTER = { display: 'grid', gap: 6 };
@@ -532,30 +536,44 @@ registerProcessor('aura-capture', AuraCapture);`;
       const [draft, setDraft] = React.useState('');
       const [busy, setBusy] = React.useState(false);
       const [error, setError] = React.useState(null);
+      const [listening, setListening] = React.useState(false);
+      const [transcribing, setTranscribing] = React.useState(false);
+      const [heard, setHeard] = React.useState('');
+      const captureRef = React.useRef(null);
+
+      /** Send one message into the session this pane belongs to. */
+      const submitText = React.useCallback(
+        async (text) => {
+          const trimmed = String(text || '').trim();
+          if (!trimmed) return false;
+          const session = bindSession(props.sessionId);
+          if (!session) {
+            setError('No live session for this pane.');
+            return false;
+          }
+          setBusy(true);
+          setError(null);
+          try {
+            const result = await session.prompt([{ type: 'text', text: trimmed }], 'queue');
+            if (result && result.ok === false) {
+              setError((result.error && result.error.message) || 'The session refused the message.');
+              return false;
+            }
+            return true;
+          } catch (failure) {
+            setError(String((failure && failure.message) || failure));
+            return false;
+          } finally {
+            setBusy(false);
+          }
+        },
+        [props.sessionId],
+      );
 
       const send = React.useCallback(async () => {
-        const text = draft.trim();
-        if (!text || busy) return;
-        const session = bindSession(props.sessionId);
-        if (!session) {
-          setError('No live session for this pane.');
-          return;
-        }
-        setBusy(true);
-        setError(null);
-        try {
-          const result = await session.prompt([{ type: 'text', text }], 'queue');
-          if (result && result.ok === false) {
-            setError((result.error && result.error.message) || 'The session refused the message.');
-          } else {
-            setDraft('');
-          }
-        } catch (failure) {
-          setError(String((failure && failure.message) || failure));
-        } finally {
-          setBusy(false);
-        }
-      }, [draft, busy, props.sessionId]);
+        if (!draft.trim() || busy) return;
+        if (await submitText(draft)) setDraft('');
+      }, [draft, busy, submitText]);
 
       const stop = React.useCallback(async () => {
         const session = bindSession(props.sessionId);
@@ -584,33 +602,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         [send],
       );
 
-      const [listening, setListening] = React.useState(false);
-      const [transcribing, setTranscribing] = React.useState(false);
-      const captureRef = React.useRef(null);
-
-      const transcribe = React.useCallback(async (pcm) => {
-        setTranscribing(true);
-        try {
-          const response = await fetch('/aura/asr', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              pcm: toBase64(new Uint8Array(pcm.buffer)),
-              sampleRate: SAMPLE_RATE,
-              channels: 1,
-            }),
-          });
-          const payload = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(payload.error || 'speech to text failed');
-          const text = String(payload.text || '').trim();
-          if (text) setDraft((current) => (current ? current + ' ' + text : text));
-        } catch (failure) {
-          setError(String((failure && failure.message) || failure));
-        } finally {
-          setTranscribing(false);
-        }
-      }, []);
-
+      /** Release the microphone and every node the capture created. */
       const stopCapture = React.useCallback(() => {
         const capture = captureRef.current;
         captureRef.current = null;
@@ -644,9 +636,47 @@ registerProcessor('aura-capture', AuraCapture);`;
 
       React.useEffect(() => () => stopCapture(), [stopCapture]);
 
+      /**
+       * One utterance: recognize it, then send it. This is the turn-taking
+       * mode — the microphone closes once the message is away, so the pane is
+       * never left listening after a send.
+       */
+      const transcribe = React.useCallback(
+        async (pcm) => {
+          setTranscribing(true);
+          try {
+            const response = await fetch('/aura/asr', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                pcm: toBase64(new Uint8Array(pcm.buffer)),
+                sampleRate: SAMPLE_RATE,
+                channels: 1,
+              }),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(payload.error || 'speech to text failed');
+            const text = String(payload.text || '').trim();
+            /* Silence is an outcome, not a failure: nothing is submitted. */
+            if (text) {
+              setHeard(text);
+              await submitText(text);
+            }
+          } catch (failure) {
+            setError(String((failure && failure.message) || failure));
+          } finally {
+            setTranscribing(false);
+            /* Either way the turn is over, so the microphone closes here. */
+            stopCapture();
+          }
+        },
+        [stopCapture, submitText],
+      );
+
       const startCapture = React.useCallback(async () => {
         captureRef.current = null;
         setError(null);
+        setHeard('');
         try {
           const media = navigator.mediaDevices;
           if (!media || typeof media.getUserMedia !== 'function') {
@@ -695,7 +725,11 @@ registerProcessor('aura-capture', AuraCapture);`;
           { style: STAGE, role: 'img', 'aria-label': `Aura ${phase}` },
           h('canvas', { ref: canvasRef, style: CANVAS }),
         ),
-        h('div', { style: CAPTION }, listening ? 'listening' : transcribing ? 'transcribing' : phase),
+        h(
+          'div',
+          { style: CAPTION, title: heard || undefined },
+          listening ? 'listening' : transcribing ? 'transcribing' : heard || phase,
+        ),
         h(
           'div',
           { style: FOOTER },

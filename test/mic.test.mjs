@@ -149,15 +149,34 @@ const slots = {
     return () => {};
   },
 };
+const prompts = [];
+const session = {
+  async prompt(content, mode) {
+    prompts.push({ content, mode });
+    return { ok: true, value: { accepted: true } };
+  },
+  async cancel() {
+    return { ok: true, value: { accepted: true } };
+  },
+};
+const services = {
+  get(name) {
+    if (name === 'sessions') return { binding: () => ({ session }) };
+    return { openTab: () => {} };
+  },
+};
 plugin.apply({
   inject: (_services, callback) =>
     callback({
       sidebarRightTabs: { register: () => () => {} },
       sidebarRight: { openTab: () => {} },
       slots,
-      get: () => ({ openTab: () => {} }),
+      get: services.get,
     }),
   slots,
+  /* The pane resolves the session through the root context, not the injected
+   * scope, so the root needs the service too. */
+  get: services.get,
 });
 
 const pane = registrations.find((entry) => entry.registration.name === 'sidebar.right.pane.tab');
@@ -199,18 +218,36 @@ const pcm = Buffer.from(body.pcm, 'base64');
 assert.ok(pcm.length > 0, 'the utterance must carry audio');
 assert.equal(pcm.length % 2, 0, 'PCM16 is two bytes per sample');
 
-await new Promise((resolve) => setTimeout(resolve, 30));
-const textarea = container.querySelector('textarea');
-assert.equal(textarea.value, '打开插件市场', 'the transcript must land in the composer');
+await new Promise((resolve) => setTimeout(resolve, 40));
 
-/* ---- the control stops the capture -------------------------------------- */
+/* Turn-taking: one utterance is recognised and sent, with no extra keystroke. */
+assert.equal(prompts.length, 1, 'the transcript must be sent into the session');
+assert.deepEqual(prompts[0].content, [{ type: 'text', text: '打开插件市场' }]);
+assert.equal(prompts[0].mode, 'queue');
 
-const stop = container.querySelector('button[aria-label="Stop listening"]');
-assert.ok(stop, 'the control must flip to stop');
-stop.click();
-await new Promise((resolve) => setTimeout(resolve, 10));
-assert.equal(stoppedTracks, 1, 'stopping must release the microphone track');
-assert.equal(liveNode.port.onmessage, null, 'stopping must drop the frame handler');
+/* And the microphone closes by itself, which is the bug this guards. */
+assert.equal(stoppedTracks, 1, 'the turn must release the microphone after sending');
+assert.equal(liveNode.port.onmessage, null, 'the frame handler must be detached');
+assert.ok(
+  container.querySelector('button[aria-label="Start listening"]'),
+  'the control must return to its idle state',
+);
+assert.equal(
+  container.querySelector('textarea').value,
+  '',
+  'the composer must stay empty when the message was already sent',
+);
+
+/* ---- silence is not sent ------------------------------------------------ */
+
+posts.length = 0;
+prompts.length = 0;
+const micAgain = container.querySelector('button[aria-label="Start listening"]');
+micAgain.click();
+await new Promise((resolve) => setTimeout(resolve, 20));
+for (let i = 0; i < 30; i += 1) liveNode.port.onmessage({ data: frame });
+await new Promise((resolve) => setTimeout(resolve, 40));
+assert.equal(prompts.length, 0, 'pure silence must submit nothing');
 
 root.unmount();
 console.log('mic.test.mjs: ok');
