@@ -17,7 +17,7 @@ import { appendFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
-import { createAsr, openParaformerSession } from './asr.js';
+import { createAsr, openParaformerSession, withAllocationRetry } from './asr.js';
 import { WebSocketServer } from 'ws';
 import { randomUUID } from 'node:crypto';
 import { createKeyReader } from './secrets.js';
@@ -95,7 +95,7 @@ function sendJson(res, status, value) {
  * previous turn cannot be mistaken for this one — the bridge does the same with
  * its `session_id + generation` filter.
  */
-export async function liveTurn(peer, asrConfig, readKey) {
+export async function liveTurn(peer, asrConfig, readKey, fallback) {
   const sessionId = `aura-${randomUUID().slice(0, 8)}`;
   const send = (value) => {
     try {
@@ -110,12 +110,17 @@ export async function liveTurn(peer, asrConfig, readKey) {
   let mode = 'manual';
   let session = null;
   let finishing = null;
+  /* Keep the audio: a stream that dies on a provider limit can still be
+   * transcribed by the other provider instead of losing the turn. */
+  let audio = [];
 
   peer.on('message', async (data, isBinary) => {
     if (isBinary) {
+      const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      if (audio.length < 400) audio.push(chunk);
       if (session && !finishing) {
         try {
-          session.send(Buffer.isBuffer(data) ? data : Buffer.from(data));
+          session.send(chunk);
         } catch {
           /* a dead socket ends the turn through close */
         }
@@ -152,16 +157,19 @@ export async function liveTurn(peer, asrConfig, readKey) {
       finishing = null;
       if (session) session.close();
       session = null;
+      audio = [];
       try {
         const apiKey = await readKey(asrConfig.apiKey);
-        const opened = await openParaformerSession({
+        const opened = await withAllocationRetry(() =>
+          openParaformerSession({
           apiKey,
           baseUrl: asrConfig.baseUrl,
           model: asrConfig.model,
           maxSentenceSilenceMs: asrConfig.maxSentenceSilenceMs,
           /* Injectable so the protocol can be exercised without a socket. */
           connect: asrConfig.connect,
-        });
+          }),
+        );
         if (mine !== generation) {
           opened.close();
           return;
@@ -169,14 +177,47 @@ export async function liveTurn(peer, asrConfig, readKey) {
         session = opened;
         send({ type: 'listen', state: 'start', mode });
       } catch (failure) {
-        send({ type: 'error', message: String((failure && failure.message) || failure).slice(0, 300) });
+        /* The stream could not open; the turn continues and the buffered audio
+         * is handed to the fallback provider when it stops. */
+        send({ type: 'listen', state: 'start', mode, degraded: true });
+        return;
       }
       return;
     }
 
     if (message.type === 'listen' && message.state === 'stop') {
-      if (!session || finishing) return;
+      if (finishing) return;
       const mine = generation;
+
+      const runFallback = async (reason) => {
+        const pcm = Buffer.concat(audio);
+        audio = [];
+        if (!fallback || pcm.length < 3200) {
+          send({ type: 'error', message: reason });
+          return;
+        }
+        try {
+          const result = await withAllocationRetry(() =>
+            fallback.transcribe({ pcm, sampleRate: 16000, channels: 1 }),
+          );
+          send({ type: 'stt', text: result.text || '', partial: false, fallback: fallback.name });
+        } catch (failure) {
+          send({ type: 'error', message: String((failure && failure.message) || failure).slice(0, 300) });
+        }
+      };
+
+      if (!session) {
+        finishing = runFallback('the realtime recognizer is unavailable').finally(() => {
+          generation += 1;
+          try {
+            peer.close();
+          } catch {
+            /* already closed */
+          }
+        });
+        return;
+      }
+
       const current = session;
       finishing = current
         .finish((update) => {
@@ -186,8 +227,10 @@ export async function liveTurn(peer, asrConfig, readKey) {
           if (mine !== generation) return;
           send({ type: 'stt', text: result.text || '', partial: false, duration: result.duration });
         })
-        .catch((failure) => {
-          send({ type: 'error', message: String((failure && failure.message) || failure).slice(0, 300) });
+        .catch(async (failure) => {
+          if (mine !== generation) return;
+          /* A provider limit must not eat the utterance. */
+          await runFallback(String((failure && failure.message) || failure));
         })
         .finally(() => {
           generation += 1;
@@ -216,6 +259,12 @@ export function apply(ctx, config = {}) {
     readSecretsFile: () => readFile(path.join(dshHome(), 'aura-secrets.env'), 'utf8'),
   });
   const asr = createAsr(asrConfig, readKey);
+  /* A different model on purpose: the realtime stream and the one-shot request
+   * draw on separate quotas, so one dying does not take the turn with it. */
+  const fallbackAsr = createAsr(
+    { ...asrConfig, provider: 'bailian', model: asrConfig.fallbackModel || 'qwen-audio-3.1-asr-flash' },
+    readKey,
+  );
 
   /* Live recognition: the browser streams PCM while the user is still talking
    * and receives partials, which is what lets it end a turn on a completed
@@ -231,7 +280,7 @@ export function apply(ctx, config = {}) {
         path: '/aura/asr/live',
         handler: (request, socket, head) => {
           sockets.handleUpgrade(request, socket, head, (peer) => {
-            void liveTurn(peer, asrConfig, readKey);
+            void liveTurn(peer, asrConfig, readKey, fallbackAsr);
           });
         },
       }),
@@ -301,12 +350,14 @@ export function apply(ctx, config = {}) {
             return;
           }
           try {
-            const result = await asr.transcribe({
-              pcm,
-              sampleRate: Number(request.sampleRate) || 16000,
-              channels: Number(request.channels) || 1,
-              hints: Array.isArray(request.hints) ? request.hints.map(String).slice(0, 8) : [],
-            });
+            const result = await withAllocationRetry(() =>
+              asr.transcribe({
+                pcm,
+                sampleRate: Number(request.sampleRate) || 16000,
+                channels: Number(request.channels) || 1,
+                hints: Array.isArray(request.hints) ? request.hints.map(String).slice(0, 8) : [],
+              }),
+            );
             sendJson(res, 200, { text: result.text, provider: asr.name, detail: result.detail });
           } catch (failure) {
             sendJson(res, 502, {

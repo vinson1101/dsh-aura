@@ -330,6 +330,30 @@ export async function openParaformerSession(options) {
   };
 }
 
+/**
+ * The free tier intermittently refuses an allocation with "free quota has been
+ * exhausted" while the console still shows quota remaining. It is a refusal,
+ * not an accounting fact: the same call a moment later succeeds. Retry exactly
+ * this error, and nothing else.
+ */
+export function isAllocationRefusal(message) {
+  return /AllocationQuota|FreeTierOnly|free quota has been exhausted/i.test(String(message || ''));
+}
+
+export async function withAllocationRetry(work, attempts = 3, delayMs = 300) {
+  let last;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await work();
+    } catch (failure) {
+      last = failure;
+      if (!isAllocationRefusal(failure && failure.message)) throw failure;
+      if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw last;
+}
+
 function paraformerProvider(options, readKey) {
   const chunkBytes = options.chunkBytes ?? 3200;
   const maxSilenceMs = options.maxSentenceSilenceMs ?? 800;

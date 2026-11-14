@@ -153,4 +153,41 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(recognizer.received.length, 0, 'no audio outside a turn');
 }
 
+/* ---- a dead stream hands the turn to the other provider ----------------- */
+
+{
+  const connection = peer();
+  const dead = {
+    send() {},
+    async next() {
+      throw new Error('The free quota has been exhausted');
+    },
+    close() {},
+  };
+  const fallback = {
+    name: 'bailian',
+    async transcribe({ pcm }) {
+      assert.ok(pcm.length > 0, 'the fallback must receive the buffered audio');
+      return { text: '降级成功', detail: `wav ${pcm.length}` };
+    },
+  };
+  await liveTurn(connection, { connect: async () => dead }, async () => 'k', fallback);
+  connection.receive(JSON.stringify({ type: 'hello', transport: 'websocket' }));
+  await tick();
+  connection.receive(JSON.stringify({ type: 'listen', state: 'start' }));
+  await tick();
+  await tick();
+  connection.receive(Buffer.alloc(6400, 3));
+  await tick();
+  connection.receive(JSON.stringify({ type: 'listen', state: 'stop' }));
+  await tick();
+  await tick();
+  await tick();
+  const stt = connection.texts.filter((message) => message.type === 'stt').at(-1);
+  assert.ok(stt, 'the fallback answer must be sent as a transcript');
+  assert.equal(stt.text, '降级成功');
+  assert.equal(stt.partial, false);
+  assert.equal(stt.fallback, 'bailian');
+}
+
 console.log('live.test.mjs: ok');

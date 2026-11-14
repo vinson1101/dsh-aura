@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.12.2';
+const AURA_VERSION = '0.13.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1207,3 +1207,4 @@ registerProcessor('aura-capture', AuraCapture);`;
     };
   },
 });
+
