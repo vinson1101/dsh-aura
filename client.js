@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.19.3';
+const AURA_VERSION = '0.19.4';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -542,13 +542,13 @@ registerProcessor('aura-capture', AuraCapture);`;
       .aura-top { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-height: 26px; }
       .aura-chip { display: inline-flex; align-items: center; gap: 7px; padding: 3px 9px 3px 3px;
         border: 1px solid transparent; border-radius: 999px; background: transparent; color: inherit;
-        font: inherit; font-size: 12px; cursor: pointer; transition: background .15s ease, border-color .15s ease; }
+        font: inherit; font-size: 13px; cursor: pointer; transition: background .15s ease, border-color .15s ease; }
       .aura-chip:hover { background: rgba(127,127,127,.14); border-color: rgba(127,127,127,.22); }
       .aura-chip[aria-expanded='true'] { background: rgba(127,127,127,.16); border-color: rgba(127,127,127,.28); }
-      .aura-ava { width: 22px; height: 22px; border-radius: 999px; object-fit: cover; display: block;
+      .aura-ava { width: 26px; height: 26px; border-radius: 999px; object-fit: cover; display: block;
         background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
-      .aura-ava-fallback { width: 22px; height: 22px; border-radius: 999px; display: grid; place-items: center;
-        font-size: 11px; font-weight: 600; color: #cfe4ff; background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
+      .aura-ava-fallback { width: 26px; height: 26px; border-radius: 999px; display: grid; place-items: center;
+        font-size: 12px; font-weight: 600; color: #cfe4ff; background: linear-gradient(140deg, #2b6cb0, #1f3a5f); }
       /* Starts below the chip, never on top of it: the control that opens the
        * card must stay clickable while it is open. */
       /* The theme already owns the popover surface and its glass treatment;
@@ -695,7 +695,7 @@ registerProcessor('aura-capture', AuraCapture);`;
     const MAX_DRAFT_HEIGHT = 132;
     const INPUT = {
       flex: 1,
-      minHeight: 34,
+      minHeight: 40,
       maxHeight: 132,
       resize: 'none',
       padding: '7px 9px',
@@ -710,9 +710,9 @@ registerProcessor('aura-capture', AuraCapture);`;
     };
     const BUTTON = {
       flex: '0 0 auto',
-      minWidth: 34,
-      height: 34,
-      padding: '0 8px',
+      minWidth: 38,
+      height: 40,
+      padding: '0 12px',
       display: 'grid',
       placeItems: 'center',
       borderRadius: 8,
@@ -720,7 +720,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       background: 'transparent',
       color: 'inherit',
       font: 'inherit',
-      fontSize: 14,
+      fontSize: 15,
       cursor: 'pointer',
     };
     const BUTTON_ACTIVE = {
