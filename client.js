@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.10.4';
+const AURA_VERSION = '0.10.5';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -842,17 +842,33 @@ registerProcessor('aura-capture', AuraCapture);`;
         async (pcm) => {
           setTranscribing(true);
           try {
-            const response = await fetch('/aura/asr', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({
-                pcm: toBase64(new Uint8Array(pcm.buffer)),
-                sampleRate: SAMPLE_RATE,
-                channels: 1,
-              }),
+            const body = JSON.stringify({
+              pcm: toBase64(new Uint8Array(pcm.buffer)),
+              sampleRate: SAMPLE_RATE,
+              channels: 1,
             });
+            /* The host reloads its plugin while the profile is edited, which
+             * briefly answers 404. One retry covers that window without hiding
+             * a real refusal. */
+            const call = () =>
+              fetch('/aura/asr', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body,
+              });
+            let response;
+            try {
+              response = await call();
+            } catch (first) {
+              diag('asr_retry', { message: String((first && first.message) || first).slice(0, 120) });
+              await new Promise((resolve) => setTimeout(resolve, 250));
+              response = await call();
+            }
             const payload = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(payload.error || 'speech to text failed');
+            if (!response.ok) {
+              diag('asr_error', { status: response.status, error: String(payload.error || '').slice(0, 160) });
+              throw new Error(payload.error || 'speech to text failed');
+            }
             const text = String(payload.text || '').trim();
             diag('asr', { bytes: pcm.length, chars: text.length, empty: text.length === 0 });
             /* Silence is an outcome, not a failure: nothing is submitted. */
@@ -861,6 +877,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               await submitText(text);
             }
           } catch (failure) {
+            diag('asr_failed', { message: String((failure && failure.message) || failure).slice(0, 160) });
             setError(String((failure && failure.message) || failure));
           } finally {
             setTranscribing(false);
