@@ -82,6 +82,32 @@ export function audioOfEvent(event) {
   }
 }
 
+/**
+ * Drop the dead air a synthesiser pads around its output.
+ *
+ * Measured on a real reply: 0.38 s before the first syllable and 0.40 s after
+ * the last, which the listener experiences as a sluggish assistant. Keep a
+ * short margin so the first phoneme and the final decay survive.
+ */
+export function trimSilence(pcm, { sampleRate = 16000, threshold = 200, marginMs = 60 } = {}) {
+  const buffer = Buffer.isBuffer(pcm) ? pcm : Buffer.from(pcm);
+  const samples = Math.floor(buffer.length / 2);
+  if (samples === 0) return buffer;
+  let first = -1;
+  let last = -1;
+  for (let index = 0; index < samples; index += 1) {
+    if (Math.abs(buffer.readInt16LE(index * 2)) > threshold) {
+      if (first < 0) first = index;
+      last = index;
+    }
+  }
+  if (first < 0) return buffer;
+  const margin = Math.round((marginMs / 1000) * sampleRate);
+  const start = Math.max(0, first - margin);
+  const end = Math.min(samples, last + 1 + margin);
+  return buffer.subarray(start * 2, end * 2);
+}
+
 /** Turn a stream of SSE lines into one continuous PCM buffer. */
 export async function assemblePcm(textChunks) {
   const pieces = [];
@@ -144,8 +170,11 @@ export function createTts(config = {}, readKey = async (configKey) => configKey)
           for await (const chunk of response.body) yield decoder.decode(chunk, { stream: true });
         })();
 
-        const pcm = await assemblePcm(lines);
-        if (pcm.length === 0) throw new Error('Bailian TTS returned no audio');
+        const raw = await assemblePcm(lines);
+        if (raw.length === 0) throw new Error('Bailian TTS returned no audio');
+        const pcm = merged.trimSilence === false
+          ? raw
+          : trimSilence(raw, { sampleRate: merged.sampleRate });
         return { pcm, sampleRate: merged.sampleRate, model: merged.model, voice: merged.voice };
       } finally {
         clearTimeout(timer);

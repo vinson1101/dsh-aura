@@ -3,7 +3,7 @@
  * provider request. Run with `node test/tts.test.mjs`.
  */
 import assert from 'node:assert/strict';
-import { assemblePcm, audioOfEvent, createTts, sseData, stripWaveHeader } from '../tts.js';
+import { assemblePcm, audioOfEvent, createTts, sseData, stripWaveHeader, trimSilence } from '../tts.js';
 
 /* ---- the SSE line splitter survives chunk boundaries -------------------- */
 
@@ -59,6 +59,30 @@ assert.equal(audioOfEvent({ output: { audio: { data: 'AAEC' } } }).length, 3);
   ];
   const pcm = await assemblePcm([events.join('\n') + '\n']);
   assert.deepEqual([...pcm], [9, 9, 8, 8], 'header stripped once, slices concatenated in order');
+}
+
+/* ---- dead air is trimmed, the speech itself is kept -------------------- */
+
+{
+  const make = (parts) => {
+    const buffer = Buffer.alloc(parts.length * 2);
+    parts.forEach((value, index) => buffer.writeInt16LE(value, index * 2));
+    return buffer;
+  };
+  /* Enough quiet on both sides that the margin is not clamped by the edges. */
+  const quiet = new Array(400).fill(0);
+  const loud = new Array(50).fill(900);
+  const one = make([...quiet, ...loud, ...quiet]);
+
+  const trimmed = trimSilence(one, { sampleRate: 16000, marginMs: 0 });
+  assert.equal(trimmed.length, loud.length * 2, 'silence on both sides goes, speech stays');
+  assert.deepEqual([...trimmed], [...make(loud)]);
+
+  const margin = trimSilence(one, { sampleRate: 16000, marginMs: 10 });
+  assert.equal(margin.length, (loud.length + 320) * 2, 'the margin keeps a short tail on each side');
+
+  assert.deepEqual(trimSilence(make(quiet)), make(quiet), 'all-silent audio is left alone');
+  assert.deepEqual(trimSilence(Buffer.alloc(0)), Buffer.alloc(0));
 }
 
 /* ---- the provider request shape ---------------------------------------- */
