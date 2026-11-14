@@ -11,9 +11,10 @@ a session runs; its colour follows the session phase. A Live2D model, a digital
 human or a plain status pill can take its place without touching the state or
 the slot wiring.
 
-> **Status: v0.2 — a docked presence.** The orb lives in a right-sidebar tab and
-> reads real session state, but it does not speak or drive anything yet. Voice,
-> session control and interruption come next; see [Roadmap](#roadmap).
+> **Status: v0.5 — docked, and it drives the session.** The orb lives in a
+> right-sidebar tab, reads real session state, and the pane carries a composer
+> that sends into the session shown in the middle column and can cancel its run.
+> Microphone capture and speech come next; see [Roadmap](#roadmap).
 
 ![The orb](icon.svg)
 
@@ -49,6 +50,8 @@ work. The tab is also listed in the right bar's own picker.
 - [x] **v0.1 — orb.** Canvas sphere, session-phase colours, lifecycle disposal.
 - [x] **v0.2 — docked.** Register a right-sidebar tab type, open it from a header
       button, and keep it resident beside the conversation.
+- [x] **v0.3 — drive.** A composer that sends into the current session
+      (`prompt`, queue mode) and a stop control (`cancel`).
 - [ ] **v0.3 — ears.** Microphone capture with local VAD, speech-to-text, and a
       message sent into the current session.
 - [ ] **v0.4 — voice.** Spoken replies with streaming TTS, sentence by sentence.
@@ -69,6 +72,27 @@ makes an assistant trustworthy rather than merely decorative:
 1. **Muting stops playback; only cancel aborts the run.** They are different actions.
 2. **A finished tool step is not a finished task.** The orb stays `running` until
    the turn actually settles.
+
+## Development
+
+```sh
+npm install
+npm test        # mounts the pane in jsdom and fails on anything the browser would hit
+```
+
+The test exists because a static render is not enough: `renderToStaticMarkup`
+never runs effects, and the first real bug in this plugin — a forms registry that
+held a function where the pane called `.mount` — threw inside `useEffect`. A
+static render passed while the pane rendered nothing in the app.
+
+### Diagnostics
+
+The pane posts four stage beacons (`factory`, `apply`, `registered`,
+`mounted`, plus `crash`) to a host route that appends them to
+`$DSH_HOME/aura-diag.jsonl`. A slot entry that never mounts looks exactly like a
+plugin that is not installed, and the renderer console cannot be read from outside
+the app, so this file is the only way to tell those two apart. The host half needs
+a DSH restart to serve the route; the browser half is picked up on reload.
 
 ## Design notes
 

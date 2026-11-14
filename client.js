@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
     /** Tab identity; `id` and `kind` are the same string on purpose. */
     const TAB_ID = 'dsh-aura';
 
-    const VERSION = '0.5.0';
+    const VERSION = '0.5.1';
 
     /** Set once the tab type, body and title are all registered. */
     const registrations = { ready: false };
@@ -571,32 +571,6 @@ window.__ModuleLoader__.load({
             for (const disposer of disposers) disposer();
           };
         });
-
-        /* Visible probe in a slot the shipped templates use, so "the bundle
-         * runs" and "the right bar renders my body" can be told apart without a
-         * console. Removed once the pane renders. */
-        ctx.slots.inject('conversation.composer.dock', () =>
-          ctx.slots.register(
-            { name: 'conversation.composer.dock', id: TAB_ID + '-probe', order: 900 },
-            function AuraProbe() {
-              return h(
-                'div',
-                {
-                  style: {
-                    fontSize: 11,
-                    lineHeight: 1.4,
-                    padding: '2px 4px',
-                    opacity: 0.7,
-                    color: 'var(--dsw-alias-text-secondary, inherit)',
-                    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-                  },
-                },
-                'aura ' + VERSION + ' · bundle ok · pane ' +
-                  (registrations.ready ? 'registered' : 'NOT registered'),
-              );
-            },
-          ),
-        );
 
         /* One click from the session header, so the tab is findable without
          * digging through the right bar's guide list. */

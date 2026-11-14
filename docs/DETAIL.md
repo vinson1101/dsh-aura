@@ -34,10 +34,17 @@ except for the orb itself.
 - **Disposal.** Unloading the plugin cancels the frame, disconnects the resize
   observer and removes both listeners, so nothing keeps painting a detached canvas.
 
+## The composer
+
+Below the sphere is one text box. Enter sends its contents into the session this
+tab belongs to — the same session shown in the middle column — and Shift+Enter
+inserts a newline. While that session runs, a stop control appears and cancels
+the run. Failures show inline instead of disappearing.
+
 ## Not in this version
 
-- The orb does not listen, speak, or send messages. It only reports state.
-- It reflects **any** running session, not the one selected in the middle panel.
+- No microphone and no speech: the composer is typed input only.
+- The sphere's colour reflects **any** running session, not only this tab's.
 - The sphere is the only form; there is no form switcher yet.
 - There is no settings page; the layout is fixed.
 
