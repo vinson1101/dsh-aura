@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.22.6';
+const AURA_VERSION = '0.23.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -403,9 +403,31 @@ window.__ModuleLoader__.load({
 registerProcessor('aura-capture', AuraCapture);`;
 
     /** Known-good CosyVoice ids from the Zebra voice path; others can be typed. */
+    /* Every voice below was probed against cosyvoice-v3-flash with this
+     * account and returned audio; the traits come from the provider's voice
+     * list. Anything not on this list was rejected with "Invalid voice". */
     const VOICES = [
-      { id: 'longanyang', label: '龙安洋 · 默认' },
-      { id: 'longyan_v3', label: '龙燕 v3' },
+      { id: 'longanyang', name: '龙安洋', trait: '阳光大男孩', note: '基准音色' },
+      { id: 'longyan_v3', name: '龙颜', trait: '温暖春风女' },
+      { id: 'longxiaochun_v3', name: '龙小淳', trait: '知性积极女' },
+      { id: 'longxiaoxia_v3', name: '龙小夏', trait: '沉稳权威女' },
+      { id: 'longwan_v3', name: '龙婉', trait: '细腻柔声女' },
+      { id: 'longyue_v3', name: '龙悦', trait: '温暖磁性女' },
+      { id: 'longyuan_v3', name: '龙媛', trait: '温暖治愈女' },
+      { id: 'longmiao_v3', name: '龙妙', trait: '抑扬顿挫女' },
+      { id: 'longhua_v3', name: '龙华', trait: '元气甜美女' },
+      { id: 'longanran_v3', name: '龙安燃', trait: '活泼质感女' },
+      { id: 'longyumi_v3', name: 'YUMI', trait: '正经青年女' },
+      { id: 'loongbella_v3', name: 'Bella', trait: '精准干练女' },
+      { id: 'longcheng_v3', name: '龙橙', trait: '智慧青年男' },
+      { id: 'longze_v3', name: '龙泽', trait: '温暖元气男' },
+      { id: 'longshu_v3', name: '龙书', trait: '沉稳青年男' },
+      { id: 'longshuo_v3', name: '龙硕', trait: '博才干练男' },
+      { id: 'longhan_v3', name: '龙寒', trait: '温暖痴情男' },
+      { id: 'longhao_v3', name: '龙浩', trait: '多情忧郁男' },
+      { id: 'longfei_v3', name: '龙飞', trait: '热血磁性男' },
+      { id: 'longlaotie_v3', name: '龙老铁', trait: '东北直率男' },
+      { id: 'longjielidou_v3', name: '龙杰力豆', trait: '阳光顽皮男' },
     ];
     const PREF_KEY = 'dsh-aura.prefs';
 
@@ -592,7 +614,12 @@ registerProcessor('aura-capture', AuraCapture);`;
       .aura-dot { width: 8px; height: 8px; border-radius: 999px; border: 1px solid rgba(127,127,127,.55); flex: 0 0 auto; }
       .aura-row[data-on='true'] .aura-dot { border-color: #7ec8ff; background: #7ec8ff; box-shadow: 0 0 8px #7ec8ff88; }
       .aura-label { flex: 1; min-width: 0; font-size: 13px; line-height: 1.35; }
-      .aura-id-mono { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; opacity: .42; display: block; }
+      .aura-id-mono { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 9px; opacity: .34; display: block; }
+      .aura-trait { font-size: 10px; margin-left: 6px; color: var(--dsw-alias-label-tertiary, inherit); opacity: .75; }
+      .aura-tag { font-size: 9px; margin-left: 6px; padding: 1px 5px; border-radius: 5px;
+        background: rgba(127,127,127,.2); opacity: .8; }
+      .aura-voices { max-height: 216px; overflow-y: auto; overscroll-behavior: contain;
+        margin: 0 -6px; padding: 0 6px; }
       .aura-act { height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,.16);
         background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer;
         opacity: .55; transition: opacity .15s ease, background .15s ease; white-space: nowrap; }
@@ -1761,6 +1788,7 @@ registerProcessor('aura-capture', AuraCapture);`;
                 'div',
                 null,
                 h('div', { className: 'aura-cap' }, '声音'),
+                h('div', { className: 'aura-voices' },
                 ...VOICES.map((voice) =>
                   h(
                     'div',
@@ -1774,7 +1802,9 @@ registerProcessor('aura-capture', AuraCapture);`;
                     h(
                       'span',
                       { className: 'aura-label' },
-                      voice.label,
+                      voice.name,
+                      voice.note ? h('span', { className: 'aura-tag' }, voice.note) : null,
+                      h('span', { className: 'aura-trait' }, voice.trait),
                       h('span', { className: 'aura-id-mono' }, voice.id),
                     ),
                     h(
@@ -1820,6 +1850,7 @@ registerProcessor('aura-capture', AuraCapture);`;
                     '使用',
                   ),
                 ),
+              ),
               ),
               h('div', { className: 'aura-rule' }),
               h(
