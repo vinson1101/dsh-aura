@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
     /** Tab identity; `id` and `kind` are the same string on purpose. */
     const TAB_ID = 'dsh-aura';
 
-    const VERSION = '0.9.1';
+    const VERSION = '0.9.2';
 
     /** Set once the tab type, body and title are all registered. */
     const registrations = { ready: false };
@@ -248,6 +248,8 @@ window.__ModuleLoader__.load({
     const PREROLL_MS = 250;
     const MIN_SPEECH_MS = 120;
     const MAX_UTTERANCE_MS = 20000;
+    /** 3200 bytes = 100 ms of PCM16 mono: the reference's "no instruction" floor. */
+    const MIN_CAPTURE_BYTES = 3200;
     const ENERGY_THRESHOLD = 0.012;
 
     /** Frame an arbitrary float stream into 20 ms blocks and cut utterances. */
@@ -278,14 +280,14 @@ window.__ModuleLoader__.load({
         return pcm;
       }
 
-      function finish() {
+      function finish(reason) {
         if (!taking) return;
         taking = false;
         const spokenMs = frames.length * FRAME_MS;
         const pcm = toPcm();
         frames = [];
         silence = 0;
-        if (spokenMs >= MIN_SPEECH_MS) onUtterance(pcm);
+        if (spokenMs >= MIN_SPEECH_MS) onUtterance(pcm, reason);
       }
 
       function take(block) {
@@ -305,9 +307,9 @@ window.__ModuleLoader__.load({
           silence = 0;
         } else {
           silence += FRAME_MS;
-          if (silence >= SILENCE_MS) finish();
+          if (silence >= SILENCE_MS) finish('silence');
         }
-        if (taking && frames.length * FRAME_MS >= MAX_UTTERANCE_MS) finish();
+        if (taking && frames.length * FRAME_MS >= MAX_UTTERANCE_MS) finish('cap');
       }
 
       return {
@@ -326,7 +328,7 @@ window.__ModuleLoader__.load({
           }
           carry = data.slice(offset);
         },
-        flush: finish,
+        flush: () => finish('flush'),
         reset() {
           taking = false;
           ring = [];
@@ -716,7 +718,14 @@ registerProcessor('aura-capture', AuraCapture);`;
           source.connect(node);
           node.connect(sink);
           sink.connect(audio.destination);
-          const vad = createVad((pcm) => {
+          const vad = createVad((pcm, reason) => {
+            diag('capture_end', {
+              reason,
+              bytes: pcm.length,
+              ms: Math.round((pcm.length / 2 / SAMPLE_RATE) * 1000),
+            });
+            /* Below the reference's floor there was no instruction to send. */
+            if (pcm.length < MIN_CAPTURE_BYTES) return;
             void transcribe(pcm);
           });
           node.port.onmessage = (event) => vad.push(event.data);
