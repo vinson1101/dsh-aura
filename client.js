@@ -15,11 +15,35 @@
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
   factory(require) {
+    diag('factory');
     const React = require('react');
     const h = React.createElement;
 
     /** Tab identity; `id` and `kind` are the same string on purpose. */
     const TAB_ID = 'dsh-aura';
+
+    const VERSION = '0.4.0';
+
+    /** Set once the tab type, body and title are all registered. */
+    const registrations = { ready: false };
+
+    /**
+     * Stage beacons. A slot entry that never mounts is indistinguishable from a
+     * plugin that is not installed, and the renderer console cannot be read
+     * from outside the app, so each stage posts to the host's diagnostic route
+     * and lands in $DSH_HOME/aura-diag.jsonl.
+     */
+    function diag(stage, extra) {
+      try {
+        fetch('/aura/diag', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ stage, v: VERSION, ...extra }),
+        });
+      } catch {
+        /* diagnostics stay silent */
+      }
+    }
 
     /* Set by `apply`; the pane reads it to reach the live session. */
     let services = null;
@@ -269,6 +293,10 @@ window.__ModuleLoader__.load({
       }
       componentDidCatch(failure, info) {
         console.error('dsh-aura: pane crashed', failure, info);
+        diag('crash', {
+          message: String((failure && failure.message) || failure),
+          stack: String((failure && failure.stack) || '').slice(0, 1200),
+        });
       }
       render() {
         const failure = this.state.failure;
@@ -336,6 +364,16 @@ window.__ModuleLoader__.load({
         if (!canvas) return undefined;
         const instance = form.mount(canvas, () => phaseRef.current);
         formRef.current = instance;
+        window.requestAnimationFrame(() => {
+          diag('mounted', {
+            pxW: canvas.clientWidth,
+            pxH: canvas.clientHeight,
+            bufW: canvas.width,
+            bufH: canvas.height,
+            phase: phaseRef.current,
+            parentH: canvas.parentElement ? canvas.parentElement.clientHeight : -1,
+          });
+        });
         return () => {
           formRef.current = null;
           instance.dispose();
@@ -479,6 +517,7 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots'],
       apply(ctx) {
+        diag('apply');
         services = ctx;
         /* Filled by the tab registration so the header button can open it. */
         let open = null;
@@ -521,6 +560,8 @@ window.__ModuleLoader__.load({
                 scope.slots.register({ name: 'sidebar.right.pane.tab.title', key: TAB_ID }, TabTitle),
               ),
             );
+            registrations.ready = true;
+              diag('registered', { tabs: true, body: true, title: true, open: typeof open === 'function' });
           } catch {
             for (const disposer of disposers) disposer();
             return;
@@ -530,6 +571,32 @@ window.__ModuleLoader__.load({
             for (const disposer of disposers) disposer();
           };
         });
+
+        /* Visible probe in a slot the shipped templates use, so "the bundle
+         * runs" and "the right bar renders my body" can be told apart without a
+         * console. Removed once the pane renders. */
+        ctx.slots.inject('conversation.composer.dock', () =>
+          ctx.slots.register(
+            { name: 'conversation.composer.dock', id: TAB_ID + '-probe', order: 900 },
+            function AuraProbe() {
+              return h(
+                'div',
+                {
+                  style: {
+                    fontSize: 11,
+                    lineHeight: 1.4,
+                    padding: '2px 4px',
+                    opacity: 0.7,
+                    color: 'var(--dsw-alias-text-secondary, inherit)',
+                    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                  },
+                },
+                'aura ' + VERSION + ' · bundle ok · pane ' +
+                  (registrations.ready ? 'registered' : 'NOT registered'),
+              );
+            },
+          ),
+        );
 
         /* One click from the session header, so the tab is findable without
          * digging through the right bar's guide list. */
