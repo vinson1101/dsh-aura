@@ -132,7 +132,7 @@ export function createTts(config = {}, readKey = async (configKey) => configKey)
   return {
     name: 'bailian_cosyvoice',
     voice: merged.voice,
-    async synthesize({ text, signal }) {
+    async synthesize({ text, voice, signal }) {
       const spoken = String(text || '').trim();
       if (!spoken) throw new Error('no text');
       const apiKey = await readKey(merged.apiKey);
@@ -153,7 +153,7 @@ export function createTts(config = {}, readKey = async (configKey) => configKey)
             model: merged.model,
             input: {
               text: spoken,
-              voice: merged.voice,
+              voice: voice || merged.voice,
               format: 'wav',
               sample_rate: merged.sampleRate,
             },
@@ -175,7 +175,7 @@ export function createTts(config = {}, readKey = async (configKey) => configKey)
         const pcm = merged.trimSilence === false
           ? raw
           : trimSilence(raw, { sampleRate: merged.sampleRate });
-        return { pcm, sampleRate: merged.sampleRate, model: merged.model, voice: merged.voice };
+        return { pcm, sampleRate: merged.sampleRate, model: merged.model, voice: voice || merged.voice };
       } finally {
         clearTimeout(timer);
       }

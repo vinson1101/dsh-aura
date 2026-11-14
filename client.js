@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.15.3';
+const AURA_VERSION = '0.16.1';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -401,6 +401,34 @@ window.__ModuleLoader__.load({
 }
 registerProcessor('aura-capture', AuraCapture);`;
 
+    /** Known-good CosyVoice ids from the Zebra voice path; others can be typed. */
+    const VOICES = [
+      { id: 'longanyang', label: '龙安洋 · 默认' },
+      { id: 'longyan_v3', label: '龙燕 v3' },
+    ];
+    const PREF_KEY = 'dsh-aura.prefs';
+
+    function readPrefs() {
+      try {
+        const raw = window.localStorage.getItem(PREF_KEY);
+        const parsed = raw ? JSON.parse(raw) : {};
+        return {
+          voice: typeof parsed.voice === 'string' ? parsed.voice : VOICES[0].id,
+          avatar: typeof parsed.avatar === 'string' ? parsed.avatar : '',
+        };
+      } catch {
+        return { voice: VOICES[0].id, avatar: '' };
+      }
+    }
+
+    function writePrefs(next) {
+      try {
+        window.localStorage.setItem(PREF_KEY, JSON.stringify(next));
+      } catch {
+        /* private mode: the choice simply does not persist */
+      }
+    }
+
     let cachedOrigin;
     /**
      * The console is served from `dsh-app://app/` inside the desktop app, so
@@ -475,6 +503,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       gap: 10,
       padding: 16,
       boxSizing: 'border-box',
+      position: 'relative',
     };
     /* The stage only centres; the form squares the canvas inside it. */
     const HEADER = {
@@ -506,6 +535,79 @@ registerProcessor('aura-capture', AuraCapture);`;
       opacity: 0.45,
       fontSize: 12,
       lineHeight: 1,
+      cursor: 'pointer',
+    };
+    const PROFILE = {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      padding: '2px 6px 2px 2px',
+      border: 'none',
+      borderRadius: 999,
+      background: 'transparent',
+      color: 'inherit',
+      font: 'inherit',
+      fontSize: 12,
+      cursor: 'pointer',
+    };
+    const AVATAR = {
+      width: 20,
+      height: 20,
+      borderRadius: 999,
+      objectFit: 'cover',
+      display: 'block',
+      background: 'var(--dsw-alias-bg-raised, rgba(127,127,127,.18))',
+    };
+    const AVATAR_FALLBACK = {
+      ...AVATAR,
+      display: 'grid',
+      placeItems: 'center',
+      fontSize: 11,
+      fontWeight: 600,
+      opacity: 0.8,
+    };
+    const PANEL_CARD = {
+      position: 'absolute',
+      top: 30,
+      right: 10,
+      width: 260,
+      padding: 10,
+      display: 'grid',
+      gap: 8,
+      borderRadius: 10,
+      border: '1px solid var(--dsw-alias-border-base, rgba(127,127,127,.35))',
+      background: 'var(--dsw-alias-bg-base, #16181d)',
+      boxShadow: '0 8px 24px rgba(0,0,0,.28)',
+      zIndex: 5,
+    };
+    const PANEL_ROW = { display: 'flex', alignItems: 'center', gap: 6 };
+    const PANEL_LABEL = {
+      fontSize: 10,
+      letterSpacing: '0.08em',
+      textTransform: 'uppercase',
+      opacity: 0.5,
+    };
+    const SMALL_INPUT = {
+      flex: 1,
+      minWidth: 0,
+      height: 24,
+      padding: '0 6px',
+      borderRadius: 6,
+      border: '1px solid var(--dsw-alias-border-base, rgba(127,127,127,.35))',
+      background: 'transparent',
+      color: 'inherit',
+      font: 'inherit',
+      fontSize: 11,
+    };
+    const SMALL_BUTTON = {
+      height: 24,
+      padding: '0 8px',
+      borderRadius: 6,
+      border: '1px solid var(--dsw-alias-border-base, rgba(127,127,127,.35))',
+      background: 'transparent',
+      color: 'inherit',
+      font: 'inherit',
+      fontSize: 11,
       cursor: 'pointer',
     };
     const STAGE = {
@@ -706,7 +808,48 @@ registerProcessor('aura-capture', AuraCapture);`;
       const [listening, setListening] = React.useState(false);
       const [transcribing, setTranscribing] = React.useState(false);
       const [heard, setHeard] = React.useState('');
+      const [prefs, setPrefs] = React.useState(readPrefs);
+      const [panelOpen, setPanelOpen] = React.useState(false);
+      const [customVoice, setCustomVoice] = React.useState('');
+      const prefsRef = React.useRef(prefs);
+      prefsRef.current = prefs;
       const captureRef = React.useRef(null);
+
+      const choose = React.useCallback((next) => {
+        const merged = { ...prefsRef.current, ...next };
+        setPrefs(merged);
+        writePrefs(merged);
+      }, []);
+
+      /** Keep the avatar small: it is stored in localStorage, not on the host. */
+      const pickAvatar = React.useCallback(
+        (file) => {
+          if (!file || !file.type.startsWith('image/')) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            const image = new Image();
+            image.onload = () => {
+              try {
+                const side = 128;
+                const canvas = document.createElement('canvas');
+                canvas.width = side;
+                canvas.height = side;
+                const context = canvas.getContext('2d');
+                const scale = Math.max(side / image.width, side / image.height);
+                const width = image.width * scale;
+                const height = image.height * scale;
+                context.drawImage(image, (side - width) / 2, (side - height) / 2, width, height);
+                choose({ avatar: canvas.toDataURL('image/png') });
+              } catch {
+                /* an unreadable image just keeps the old avatar */
+              }
+            };
+            image.src = String(reader.result || '');
+          };
+          reader.readAsDataURL(file);
+        },
+        [choose],
+      );
       const partialRef = React.useRef({ text: '', at: 0 });
       const voiceRef = React.useRef(null);
       const levelRef = React.useRef(0);
@@ -735,7 +878,7 @@ registerProcessor('aura-capture', AuraCapture);`;
 
       /** Speak one reply: whole utterance, metered into the sphere. */
       const speak = React.useCallback(
-        async (text) => {
+        async (text, voice) => {
           const spoken = String(text || '').trim();
           if (!spoken) return;
           stopSpeaking();
@@ -744,7 +887,10 @@ registerProcessor('aura-capture', AuraCapture);`;
             const response = await fetch('/aura/tts', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ text: spoken.slice(0, 2000) }),
+              body: JSON.stringify({
+                text: spoken.slice(0, 2000),
+                voice: voice || prefsRef.current.voice,
+              }),
             });
             const payload = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(payload.error || 'speech synthesis failed');
@@ -1146,7 +1292,106 @@ registerProcessor('aura-capture', AuraCapture);`;
             },
             '⟳',
           ),
+          h(
+            'button',
+            {
+              type: 'button',
+              style: PROFILE,
+              title: 'Voice and avatar',
+              'aria-label': 'Aura profile',
+              'aria-expanded': String(panelOpen),
+              onClick: () => setPanelOpen((open) => !open),
+            },
+            prefs.avatar
+              ? h('img', { src: prefs.avatar, style: AVATAR, alt: '' })
+              : h('span', { style: AVATAR_FALLBACK }, 'A'),
+            h('span', null, 'Aura'),
+          ),
         ),
+        panelOpen
+          ? h(
+              'div',
+              { style: PANEL_CARD },
+              h('div', { style: PANEL_LABEL }, '头像'),
+              h(
+                'div',
+                { style: PANEL_ROW },
+                h('input', {
+                  type: 'file',
+                  accept: 'image/*',
+                  'aria-label': 'Upload an avatar',
+                  style: { fontSize: 11, flex: 1, minWidth: 0 },
+                  onChange: (event) => {
+                    const file = event.target.files && event.target.files[0];
+                    if (file) pickAvatar(file);
+                  },
+                }),
+                prefs.avatar
+                  ? h(
+                      'button',
+                      { type: 'button', style: SMALL_BUTTON, onClick: () => choose({ avatar: '' }) },
+                      '清除',
+                    )
+                  : null,
+              ),
+              h('div', { style: PANEL_LABEL }, '声音'),
+              ...VOICES.map((voice) =>
+                h(
+                  'div',
+                  { style: PANEL_ROW, key: voice.id },
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      style: SMALL_BUTTON,
+                      title: 'Use this voice',
+                      'aria-label': `Use ${voice.id}`,
+                      onClick: () => choose({ voice: voice.id }),
+                    },
+                    prefs.voice === voice.id ? '●' : '○',
+                  ),
+                  h('span', { style: { flex: 1, fontSize: 11 } }, voice.label),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      style: SMALL_BUTTON,
+                      title: `Preview ${voice.id}`,
+                      'aria-label': `Preview ${voice.id}`,
+                      onClick: () => void speak('你好，我是 Aura。现在可以听到我说话。', voice.id),
+                    },
+                    '试听',
+                  ),
+                ),
+              ),
+              h(
+                'div',
+                { style: PANEL_ROW },
+                h('input', {
+                  style: SMALL_INPUT,
+                  value: customVoice,
+                  placeholder: '自定义 voice id',
+                  'aria-label': 'Custom voice id',
+                  onChange: (event) => setCustomVoice(event.target.value),
+                  onKeyDown: (event) => {
+                    if (event.key === 'Enter' && /^[A-Za-z0-9_.-]{1,64}$/.test(customVoice.trim())) {
+                      choose({ voice: customVoice.trim() });
+                    }
+                  },
+                }),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    style: SMALL_BUTTON,
+                    disabled: !/^[A-Za-z0-9_.-]{1,64}$/.test(customVoice.trim()),
+                    onClick: () => choose({ voice: customVoice.trim() }),
+                  },
+                  '使用',
+                ),
+              ),
+            )
+          : null,
         h(
           'div',
           { style: STAGE, role: 'img', 'aria-label': `Aura ${phase}` },
@@ -1183,17 +1428,6 @@ registerProcessor('aura-capture', AuraCapture);`;
                 onClick: toggleMic,
               },
               listening ? '● 在听' : '🎙 说话',
-            ),
-            h(
-              'button',
-              {
-                type: 'button',
-                style: BUTTON,
-                title: `Play a test phrase · ${AURA_VERSION}`,
-                'aria-label': 'Play a test phrase',
-                onClick: () => void speak('你好，我是 Aura。现在可以听到我说话。'),
-              },
-              '🔊 试听',
             ),
             h(
               'button',

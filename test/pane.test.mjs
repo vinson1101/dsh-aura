@@ -172,6 +172,10 @@ assert.ok(
   container.querySelector('button[aria-label="Force reload"]'),
   'the reload control must sit beside the version',
 );
+assert.ok(
+  container.querySelector('button[aria-label="Aura profile"]'),
+  'the profile control must be in the header',
+);
 
 const canvas = container.querySelector('canvas');
 assert.ok(canvas, 'the pane must contain a canvas; rendered instead: ' + text.slice(0, 400));

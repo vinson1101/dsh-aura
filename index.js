@@ -389,12 +389,16 @@ export function apply(ctx, config = {}) {
             return;
           }
           const text = String(request.text || '').trim().slice(0, 2000);
+          /* A voice id is a short token; anything else is refused rather than
+           * forwarded to the provider. */
+          const requestedVoice = String(request.voice || '').trim();
+          const voice = /^[A-Za-z0-9_.-]{1,64}$/.test(requestedVoice) ? requestedVoice : undefined;
           if (!text) {
             sendJson(res, 400, { error: 'no text' });
             return;
           }
           try {
-            const result = await tts.synthesize({ text });
+            const result = await tts.synthesize({ text, voice });
             sendJson(res, 200, {
               pcm: result.pcm.toString('base64'),
               sampleRate: result.sampleRate,
