@@ -60,15 +60,21 @@ the proven run.
 alternative; the sentence "keeps the already deployed MiniMax TTS" in the ASR
 document is stale and misled a reader once already.
 
-## Account state at the time of writing
+## Verified against the live service
 
-Both models authenticate with the key in `$DSH_HOME/aura-secrets.env`, and both
-answer `FreeTierOnly` / "free quota has been exhausted" for that account:
+Both providers are exercised against the real endpoints with the key in
+`$DSH_HOME/aura-secrets.env`:
 
-- `fun-asr-flash-2026-06-15` → HTTP 403 before any audio is accepted
-- `paraformer-realtime-v2` → one successful transcription, then `task-failed`
-  with the same quota message
+- `paraformer-realtime-v2`, from the Python implementation in
+  `xiaozhi-openclaw-bridge` and from this plugin's Node driver, both return
+  `你好，我是斑马，现在测试语音识别。` for the same synthesized clip.
+- `POST /aura/asr` returns
+  `{"text": "...", "provider": "bailian_paraformer_realtime"}` in about 950 ms
+  for 3.4 s of audio, which includes the WebSocket round trip.
 
-So the code paths below are verified up to the provider's business response; a
-top-up or disabling "use free tier only" in the Model Studio console is what
-makes them return text again.
+One earlier call failed with `FreeTierOnly` / "free quota has been exhausted"
+while an identical call to the same model in the same minute succeeded, so that
+message is treated as a transient provider state rather than an account limit.
+Worth watching: the pane surfaces it verbatim, and a retry was deliberately not
+added — retrying a real quota error would hide it.
+
