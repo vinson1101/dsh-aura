@@ -111,7 +111,11 @@ function bailianProvider(options, readKey) {
             'X-DashScope-SSE': 'disable',
           },
           body: JSON.stringify({
-            model: options.model ?? 'fun-asr-flash-2026-06-15',
+            /* The name `bailian_fun_flash` is historical: the bridge's logs say
+             * fun-asr-flash while the model that actually ran came from
+             * XOB_BAILIAN_ASR_MODEL. qwen-audio-3.1-asr-flash is the one with
+             * recent log evidence. */
+            model: options.model ?? 'qwen-audio-3.1-asr-flash',
             input: { messages },
             parameters: { format: 'wav', sample_rate: String(sampleRate) },
           }),
@@ -123,7 +127,8 @@ function bailianProvider(options, readKey) {
         }
         const payload = await response.json();
         const text = textOfResponse(payload);
-        if (!text) throw new Error('Bailian ASR returned no transcript');
+        /* Silence is a normal outcome, not a failure: the caller drops an empty
+         * transcript instead of submitting it to the agent. */
         return { text, detail: `wav ${wav.length} bytes` };
       } finally {
         clearTimeout(timer);
@@ -315,8 +320,10 @@ function paraformerProvider(options, readKey) {
         );
 
         const { text, duration } = await readParaformerResult(channel);
-        if (!text) throw new Error('Bailian returned no transcript');
-        return { text, detail: `paraformer pcm ${pcm.length} bytes${duration ? ` duration=${duration}s` : ''}` };
+        return {
+          text,
+          detail: `paraformer pcm ${pcm.length} bytes${duration ? ` duration=${duration}s` : ''}`,
+        };
       } finally {
         clearTimeout(deadline);
         channel.close();

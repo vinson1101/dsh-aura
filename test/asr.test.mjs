@@ -82,6 +82,24 @@ assert.equal(textOfResponse(null), '');
   assert.equal(decoded.subarray(0, 4).toString(), 'RIFF');
 }
 
+/* ---- silence is a normal outcome, not an error -------------------------- */
+
+{
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    async json() {
+      return { output: { text: '   ' } };
+    },
+    async text() {
+      return '';
+    },
+  });
+  const asr = createAsr({ provider: 'bailian' }, () => 'k');
+  const result = await asr.transcribe({ pcm });
+  assert.equal(result.text, '', 'an empty transcript returns empty text');
+}
+
 /* ---- a refused request must surface, not return empty text -------------- */
 
 {

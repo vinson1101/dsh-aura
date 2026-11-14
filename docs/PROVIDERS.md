@@ -1,80 +1,106 @@
 # Providers this plugin uses
 
-Taken from the Zebra stacks, not invented. The point of this file is that the
-next person does not have to re-derive which model is the proven one:
-`xiaozhi-openclaw-bridge` carries several providers, and only some are the ones
-that actually ran.
+Written after a sync from the Zebra / XiaoZhi side of the same voice work, and
+after correcting two mistakes of mine: I once took a stale line in an ASR
+document as the deployed TTS choice, and once took a source default as the model
+that actually ran. The lesson both times is the same — a provider *name* and a
+provider *default* are not evidence of what ran.
 
-## Speech to text — Paraformer realtime
+Three things are easy to conflate. Keep them apart:
 
-| | |
-| --- | --- |
-| Provider | `bailian_paraformer_realtime` |
-| Model | `paraformer-realtime-v2` |
-| Transport | WebSocket `wss://dashscope.aliyuncs.com/api-ws/v1/inference` |
-| Audio | raw PCM16, 16 kHz mono — no WAV or Ogg container |
-| Endpointing | `max_sentence_silence: 800` |
+| Path | Transport | What it is |
+| --- | --- | --- |
+| HTTP whole-utterance ASR | `POST /api/v1/services/aigc/multimodal-generation/generation` | The most recent Zebra Bridge runs used this, with `qwen-audio-3.1-asr-flash`. One complete WAV per request. |
+| Paraformer realtime ASR | `wss://…/api-ws/v1/inference` | The older local-voice reuse / product candidate path, `paraformer-realtime-v2`. Duplex PCM. |
+| CosyVoice HTTP SSE TTS | `POST /api/v1/services/audio/tts/SpeechSynthesizer` | Speech out, streamed as base64 chunks inside SSE events. |
 
-Source: `src/xiaozhi_openclaw_bridge/asr.py` (`BailianParaformerRealtimeProvider`,
-`_run_paraformer_realtime`) and `docs/PHASE7B_ASR_PROVIDER.md`, which records the
-deployed selection:
+## HTTP whole-utterance ASR
 
-```
-XOB_ASR_PROVIDER=bailian_paraformer_realtime
-XOB_BAILIAN_PARA_ASR_MODEL=paraformer-realtime-v2
-```
-
-**Not** `fun-asr-flash`. That provider exists in the bridge as the first
-bring-up path and its own document says it is "not enabled by default".
-
-Protocol shape, for review: `run-task` → `task-started` → binary PCM frames
-(3200 bytes each) → `finish-task` → `result-generated` events until
-`task-finished`. Sentences marked `sentence_end: true` concatenate into the
-final transcript; a trailing partial sentence is the fallback when none is
-marked.
-
-## Text to speech — Bailian CosyVoice
-
-| | |
-| --- | --- |
-| Provider | `bailian` |
-| Model | `cosyvoice-v3-flash` |
-| Voice | `longyan_v3` |
-| Transport | `POST {base}/services/audio/tts/SpeechSynthesizer`, `X-DashScope-SSE: enable` |
-| Output | PCM16 16 kHz mono, one base64 chunk per `output.audio.data` |
-
-Source: `src/xiaozhi_openclaw_bridge/tts.py` (`BailianTtsProvider`,
-`_post_bailian_sse`) and the run recorded in `docs/PHASE3_HERMES_LAN_CLI.md`:
+The **latest runs with log evidence** used `qwen-audio-3.1-asr-flash` through the
+HTTP multimodal-generation endpoint. The provider *name* inside the bridge is
+`bailian_fun_flash` and its logs are prefixed `fun-asr-flash`, but that prefix
+does not mean the Fun-ASR model was called — the model came from
+`XOB_BAILIAN_ASR_MODEL`. That naming is a trap worth remembering.
 
 ```
-XOB_TTS_PROVIDER=bailian
-XOB_BAILIAN_TTS_MODEL=cosyvoice-v3-flash
-XOB_BAILIAN_TTS_VOICE=longyan_v3
+POST https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation
+Authorization: Bearer <DASHSCOPE_API_KEY>
+Content-Type: application/json
+X-DashScope-SSE: disable
 ```
 
-Note the code default for the voice is `longanyang`; the recorded run used
-`longyan_v3`. When the voice is wired here, `longyan_v3` is the value to match
-the proven run.
+```json
+{
+  "model": "qwen-audio-3.1-asr-flash",
+  "input": { "messages": [ { "role": "user", "content": [
+    { "type": "input_audio", "input_audio": { "data": "data:audio/wav;base64,<complete WAV>" } } ] } ] },
+  "parameters": { "format": "wav", "sample_rate": "16000" }
+}
+```
 
-**Not** MiniMax. `docs/PHASE7C_TTS_PROVIDER.md` describes MiniMax as an opt-in
-alternative; the sentence "keeps the already deployed MiniMax TTS" in the ASR
-document is stale and misled a reader once already.
+- Build one **complete WAV** before encoding; the bridge wraps its Opus frames
+  into Ogg and sends `format: "ogg"`, this plugin sends PCM16 → WAV.
+- Never label raw PCM or a bare Opus frame as WAV or Ogg.
+- Read `output.text` or `output.sentence.text`; top-level `text` and
+  `sentence.text` are also accepted.
+- **An empty transcript is not an error and must not be submitted** to the agent.
+- `sample_rate` is a string in `parameters`.
 
-## Verified against the live service
+## Paraformer realtime ASR
 
-Both providers are exercised against the real endpoints with the key in
-`$DSH_HOME/aura-secrets.env`:
+`wss://dashscope.aliyuncs.com/api-ws/v1/inference`, model `paraformer-realtime-v2`:
 
-- `paraformer-realtime-v2`, from the Python implementation in
-  `xiaozhi-openclaw-bridge` and from this plugin's Node driver, both return
-  `你好，我是斑马，现在测试语音识别。` for the same synthesized clip.
-- `POST /aura/asr` returns
-  `{"text": "...", "provider": "bailian_paraformer_realtime"}` in about 950 ms
-  for 3.4 s of audio, which includes the WebSocket round trip.
+`run-task` (UUID, `streaming: duplex`, payload `task_group: audio` / `task: asr` /
+`function: recognition`, parameters `format: pcm`, `sample_rate: 16000`,
+`input: {}` **sibling to `parameters`**) → wait for `task-started` → send PCM16LE
+16 kHz mono in binary frames of 3200 bytes (100 ms) → `finish-task` with the same
+UUID → collect `result-generated` sentence-final text until `task-finished`.
+`task-failed` is an error.
 
-One earlier call failed with `FreeTierOnly` / "free quota has been exhausted"
-while an identical call to the same model in the same minute succeeded, so that
-message is treated as a transient provider state rather than an account limit.
-Worth watching: the pane surfaces it verbatim, and a retry was deliberately not
-added — retrying a real quota error would hide it.
+Do not mix this with the HTTP path, and do not use the experimental `-message`
+models.
 
+## CosyVoice TTS
+
+```
+POST https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer
+Authorization: Bearer <DASHSCOPE_API_KEY>
+Content-Type: application/json
+X-DashScope-SSE: enable
+```
+
+Source defaults (not a claim about the deployed voice — check
+`XOB_BAILIAN_TTS_MODEL`, `XOB_BAILIAN_TTS_VOICE`, `XOB_BAILIAN_TTS_SAMPLE_RATE`,
+and optionally `instruction` against the authorized configuration):
+
+```json
+{ "model": "cosyvoice-v3-flash",
+  "input": { "text": "收到。", "voice": "longanyang", "format": "wav", "sample_rate": 16000 } }
+```
+
+Reading the stream:
+
+- Each SSE line is `data: <json>`; skip events with no audio.
+- Base64-decode `output.audio.data` **in order** into one continuous stream.
+- If the payload carries RIFF/WAVE, find the `data` chunk across chunks and strip
+  the RIFF header **exactly once**. The result is continuous mono S16LE PCM.
+- Never play each chunk as its own WAV, and never feed the WAV header to a PCM
+  player.
+
+`stream_audio()` yields PCM; `synthesize()` returns the concatenated PCM, not a
+WAV — add a header yourself if you need a file.
+
+The TTS provider is **not** MiniMax. Hermes may use a MiniMax model for its LLM;
+that is unrelated to this voice path.
+
+## What this plugin implements today
+
+- HTTP whole-utterance ASR with `qwen-audio-3.1-asr-flash` — the default.
+- Paraformer realtime ASR — implemented and switchable, kept because it removes
+  the "wait until the utterance ends" latency once it is worth the extra moving
+  parts.
+- CosyVoice TTS — not implemented yet; the recipe above is what will be built,
+  including the strip-the-header-once rule.
+
+An empty transcript returns an empty string, is not an error, and is not placed
+in the composer.
