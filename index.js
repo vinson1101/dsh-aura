@@ -17,7 +17,9 @@ import { appendFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
-import { createAsr } from './asr.js';
+import { createAsr, openParaformerSession } from './asr.js';
+import { WebSocketServer } from 'ws';
+import { randomUUID } from 'node:crypto';
 import { createKeyReader } from './secrets.js';
 import { createTts } from './tts.js';
 
@@ -77,6 +79,132 @@ function sendJson(res, status, value) {
   res.end(body);
 }
 
+/**
+ * One live turn, speaking the same control frames the XiaoZhi bridge speaks
+ * (`server.py: device_websocket_hello / device_websocket_control`):
+ *
+ *   client  {"type":"hello","transport":"websocket","audio_params":{…}}
+ *   server  {"type":"hello","transport":"websocket","session_id":…,"audio_params":{…}}
+ *   client  {"type":"listen","state":"start","mode":"manual"|"auto"}
+ *   client  <binary PCM16 frames>
+ *   server  {"type":"stt","text":…,"partial":true}
+ *   client  {"type":"listen","state":"stop"}
+ *   server  {"type":"stt","text":…,"partial":false}
+ *
+ * `generation` is bumped on every listen start so a late transcript from a
+ * previous turn cannot be mistaken for this one — the bridge does the same with
+ * its `session_id + generation` filter.
+ */
+export async function liveTurn(peer, asrConfig, readKey) {
+  const sessionId = `aura-${randomUUID().slice(0, 8)}`;
+  const send = (value) => {
+    try {
+      if (peer.readyState === peer.OPEN) peer.send(JSON.stringify({ session_id: sessionId, ...value }));
+    } catch {
+      /* the peer is gone */
+    }
+  };
+
+  let greeted = false;
+  let generation = 0;
+  let mode = 'manual';
+  let session = null;
+  let finishing = null;
+
+  peer.on('message', async (data, isBinary) => {
+    if (isBinary) {
+      if (session && !finishing) {
+        try {
+          session.send(Buffer.isBuffer(data) ? data : Buffer.from(data));
+        } catch {
+          /* a dead socket ends the turn through close */
+        }
+      }
+      return;
+    }
+
+    let message;
+    try {
+      message = JSON.parse(String(data));
+    } catch {
+      send({ type: 'error', message: 'invalid JSON' });
+      return;
+    }
+
+    if (message.type === 'hello') {
+      greeted = true;
+      send({
+        type: 'hello',
+        transport: 'websocket',
+        audio_params: { format: 'pcm16', sample_rate: 16000, channels: 1, frame_duration: 100 },
+      });
+      return;
+    }
+
+    if (!greeted) {
+      send({ type: 'error', message: 'expected hello' });
+      return;
+    }
+
+    if (message.type === 'listen' && message.state === 'start') {
+      mode = message.mode === 'auto' ? 'auto' : 'manual';
+      const mine = ++generation;
+      finishing = null;
+      if (session) session.close();
+      session = null;
+      try {
+        const apiKey = await readKey(asrConfig.apiKey);
+        const opened = await openParaformerSession({
+          apiKey,
+          baseUrl: asrConfig.baseUrl,
+          model: asrConfig.model,
+          maxSentenceSilenceMs: asrConfig.maxSentenceSilenceMs,
+          /* Injectable so the protocol can be exercised without a socket. */
+          connect: asrConfig.connect,
+        });
+        if (mine !== generation) {
+          opened.close();
+          return;
+        }
+        session = opened;
+        send({ type: 'listen', state: 'start', mode });
+      } catch (failure) {
+        send({ type: 'error', message: String((failure && failure.message) || failure).slice(0, 300) });
+      }
+      return;
+    }
+
+    if (message.type === 'listen' && message.state === 'stop') {
+      if (!session || finishing) return;
+      const mine = generation;
+      const current = session;
+      finishing = current
+        .finish((update) => {
+          if (mine === generation) send({ type: 'stt', text: update.latest, partial: true });
+        })
+        .then((result) => {
+          if (mine !== generation) return;
+          send({ type: 'stt', text: result.text || '', partial: false, duration: result.duration });
+        })
+        .catch((failure) => {
+          send({ type: 'error', message: String((failure && failure.message) || failure).slice(0, 300) });
+        })
+        .finally(() => {
+          generation += 1;
+          try {
+            peer.close();
+          } catch {
+            /* already closed */
+          }
+        });
+    }
+  });
+
+  peer.on('close', () => {
+    if (session) session.close();
+  });
+}
+
 export function apply(ctx, config = {}) {
   const asrConfig = config.asr || {};
   const readKey = createKeyReader({
@@ -88,6 +216,27 @@ export function apply(ctx, config = {}) {
     readSecretsFile: () => readFile(path.join(dshHome(), 'aura-secrets.env'), 'utf8'),
   });
   const asr = createAsr(asrConfig, readKey);
+
+  /* Live recognition: the browser streams PCM while the user is still talking
+   * and receives partials, which is what lets it end a turn on a completed
+   * sentence instead of on a silence gap alone. */
+  const sockets = new WebSocketServer({ noServer: true });
+  ctx.effect(
+    () => () => sockets.close(),
+    'dsh-aura: live recognition server',
+  );
+  ctx.effect(
+    () =>
+      ctx.webServer.registerUpgrade({
+        path: '/aura/asr/live',
+        handler: (request, socket, head) => {
+          sockets.handleUpgrade(request, socket, head, (peer) => {
+            void liveTurn(peer, asrConfig, readKey);
+          });
+        },
+      }),
+    'dsh-aura: live recognition route',
+  );
   const tts = createTts(config.tts || {}, readKey);
 
   ctx.effect(

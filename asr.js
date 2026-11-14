@@ -235,7 +235,7 @@ async function awaitEvent(channel, wanted) {
   }
 }
 
-async function readParaformerResult(channel) {
+async function readParaformerResult(channel, onUpdate) {
   const finished = [];
   let latest = '';
   let duration;
@@ -256,6 +256,7 @@ async function readParaformerResult(channel) {
     if (typeof sentence.text === 'string' && sentence.text.trim()) {
       latest = sentence.text.trim();
       if (sentence.sentence_end === true) finished.push(latest);
+      if (typeof onUpdate === 'function') onUpdate({ latest, end: sentence.sentence_end === true });
     }
     const usage = payload.usage || {};
     if (typeof usage.duration === 'number') duration = usage.duration;
@@ -263,6 +264,70 @@ async function readParaformerResult(channel) {
   }
   const text = finished.join('').trim() || latest;
   return { text, duration };
+}
+
+/**
+ * Open a duplex Paraformer session and keep it open.
+ *
+ * This is what makes a live endpoint possible: partial results arrive while the
+ * user is still talking, so the caller can decide that a sentence is complete
+ * without waiting for a silence gap.
+ */
+export async function openParaformerSession(options) {
+  const {
+    apiKey,
+    baseUrl,
+    model = 'paraformer-realtime-v2',
+    sampleRate = 16000,
+    maxSentenceSilenceMs = 800,
+    hints = ['zh', 'en'],
+    timeoutMs = 60000,
+    connect = defaultConnect,
+  } = options;
+  if (!apiKey) throw new Error('Bailian ASR needs an API key');
+
+  const channel = await connect(paraformerUrl(baseUrl), apiKey, timeoutMs);
+  const taskId = globalThis.crypto?.randomUUID?.() ?? `aura-${Date.now()}`;
+
+  const parameters = {
+    format: 'pcm',
+    sample_rate: sampleRate,
+    disfluency_removal_enabled: false,
+    punctuation_prediction_enabled: true,
+    semantic_punctuation_enabled: false,
+    max_sentence_silence: maxSentenceSilenceMs,
+  };
+  if (hints.length > 0) parameters.language_hints = hints;
+
+  channel.send(
+    JSON.stringify({
+      header: { action: 'run-task', task_id: taskId, streaming: 'duplex' },
+      payload: { task_group: 'audio', task: 'asr', function: 'recognition', model, parameters, input: {} },
+    }),
+  );
+  await awaitEvent(channel, 'task-started');
+
+  let reading = null;
+  return {
+    send(pcm) {
+      channel.send(pcm);
+    },
+    /** Stop accepting audio, wait for the final transcript. */
+    finish(onUpdate) {
+      if (reading) return reading;
+      channel.send(
+        JSON.stringify({
+          header: { action: 'finish-task', task_id: taskId, streaming: 'duplex' },
+          payload: { input: {} },
+        }),
+      );
+      reading = readParaformerResult(channel, onUpdate);
+      return reading;
+    },
+    close() {
+      channel.close();
+    },
+  };
 }
 
 function paraformerProvider(options, readKey) {

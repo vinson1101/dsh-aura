@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.11.0';
+const AURA_VERSION = '0.12.1';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -284,6 +284,10 @@ window.__ModuleLoader__.load({
      * Numbers are the reference's: 100 ms blocks, 900 ms of quiet, 4 s of
      * nothing, a 12 s cap.
      */
+    /** How long a partial must hold still before the sentence counts as done.
+     * The reference used 1.8 s on its local decoder; cloud partials settle a
+     * little sooner. */
+    const STABLE_MS = 1600;
     const CHUNK_MS = 100;
     const CHUNK_SIZE = (SAMPLE_RATE * CHUNK_MS) / 1000;
     const QUIET_CHUNKS = 9;
@@ -295,13 +299,14 @@ window.__ModuleLoader__.load({
     const FLOOR_DECAY = 0.8;
     const NOISE_CEILING = 850;
 
-    function createVad(onUtterance) {
+    function createVad({ onChunk, onEnd }) {
       let carry = new Float32Array(0);
-      let chunks = [];
+      let chunks = 0;
       let speech = false;
       let quiet = 0;
       let floor = null;
       let peak = 0;
+      let done = false;
 
       /** RMS on the 16-bit scale, the units the reference uses. */
       function levelOf(block) {
@@ -313,39 +318,23 @@ window.__ModuleLoader__.load({
         return Math.sqrt(sum / block.length);
       }
 
-      function toPcm() {
-        const samples = chunks.length * CHUNK_SIZE;
-        const pcm = new Int16Array(samples);
-        let offset = 0;
-        for (const chunk of chunks) {
-          for (let index = 0; index < chunk.length; index += 1) {
-            const value = Math.max(-1, Math.min(1, chunk[index]));
-            pcm[offset + index] = value < 0 ? value * 0x8000 : value * 0x7fff;
-          }
-          offset += CHUNK_SIZE;
+      /** Float block -> PCM16 for the wire; the provider wants exactly this. */
+      function toPcm(block) {
+        const pcm = new Int16Array(block.length);
+        for (let index = 0; index < block.length; index += 1) {
+          const value = Math.max(-1, Math.min(1, block[index]));
+          pcm[index] = value < 0 ? value * 0x8000 : value * 0x7fff;
         }
         return pcm;
       }
 
-      function finish(reason) {
-        if (chunks.length === 0) return;
-        const spoken = speech;
-        const pcm = toPcm();
-        const kept = chunks.length;
-        chunks = [];
-        speech = false;
-        quiet = 0;
-        /* Nothing was ever said: the reference returns an empty buffer and the
-         * caller submits nothing. */
-        if (!spoken) {
-          onUtterance(pcm, reason, false);
-          return;
-        }
-        onUtterance(pcm, reason, kept * CHUNK_MS >= 250);
+      function end(reason) {
+        if (done) return;
+        done = true;
+        onEnd(reason, speech, chunks * CHUNK_MS);
       }
 
       function take(block) {
-        chunks.push(block);
         const level = levelOf(block);
         peak = Math.max(level, peak * PEAK_DECAY);
         if (floor === null) floor = Math.min(level, NOISE_CEILING);
@@ -357,20 +346,25 @@ window.__ModuleLoader__.load({
           quiet += 1;
           floor = FLOOR_DECAY * floor + (1 - FLOOR_DECAY) * Math.min(level, NOISE_CEILING);
         }
+        chunks += 1;
+        /* Audio goes out as it arrives: the recogniser needs it now, and the
+         * caller needs the level to decide whether the user is still talking. */
+        onChunk(toPcm(block), level, peak);
 
         if (speech && quiet >= QUIET_CHUNKS) {
-          finish('quiet');
+          end('quiet');
           return;
         }
-        if (!speech && chunks.length >= NO_SPEECH_CHUNKS) {
-          finish('no_speech');
+        if (!speech && chunks >= NO_SPEECH_CHUNKS) {
+          end('no_speech');
           return;
         }
-        if (chunks.length >= MAX_CHUNKS) finish('limit');
+        if (chunks >= MAX_CHUNKS) end('limit');
       }
 
       return {
         push(samples) {
+          if (done) return;
           let data = samples;
           if (carry.length) {
             const merged = new Float32Array(carry.length + data.length);
@@ -385,12 +379,7 @@ window.__ModuleLoader__.load({
           }
           carry = data.slice(offset);
         },
-        flush: () => finish('flush'),
-        reset() {
-          chunks = [];
-          speech = false;
-          quiet = 0;
-        },
+        end,
       };
     }
 
@@ -649,6 +638,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       const [transcribing, setTranscribing] = React.useState(false);
       const [heard, setHeard] = React.useState('');
       const captureRef = React.useRef(null);
+      const partialRef = React.useRef({ text: '', at: 0 });
       const voiceRef = React.useRef(null);
       const levelRef = React.useRef(0);
       const speakNext = React.useRef(false);
@@ -836,17 +826,13 @@ registerProcessor('aura-capture', AuraCapture);`;
       );
 
       /** Release the microphone and every node the capture created. */
+      /** Tear down the microphone, the live socket and the meter. */
       const stopCapture = React.useCallback(() => {
         const capture = captureRef.current;
         captureRef.current = null;
         setListening(false);
         if (!capture) return;
         diag('mic_stop');
-        try {
-          capture.vad.flush();
-        } catch {
-          /* nothing to flush */
-        }
         try {
           capture.node.port.onmessage = null;
           capture.source.disconnect();
@@ -866,69 +852,39 @@ registerProcessor('aura-capture', AuraCapture);`;
             /* already stopped */
           }
         }
+        if (capture.socket) {
+          try {
+            capture.socket.close();
+          } catch {
+            /* already closed */
+          }
+        }
       }, []);
 
       React.useEffect(() => () => stopCapture(), [stopCapture]);
 
       /**
-       * One utterance: recognize it, then send it. This is the turn-taking
-       * mode — the microphone closes once the message is away, so the pane is
-       * never left listening after a send.
+       * One live turn over the bridge's control frames: hello, listen start,
+       * binary PCM, listen stop, stt final. Partials arrive while the user is
+       * still talking, so the caption fills in and the turn can end on a
+       * completed sentence instead of only on silence.
        */
-      const transcribe = React.useCallback(
-        async (pcm) => {
-          setTranscribing(true);
-          try {
-            const body = JSON.stringify({
-              pcm: toBase64(new Uint8Array(pcm.buffer)),
-              sampleRate: SAMPLE_RATE,
-              channels: 1,
-            });
-            /* The host reloads its plugin while the profile is edited, which
-             * briefly answers 404. One retry covers that window without hiding
-             * a real refusal. */
-            const call = () =>
-              fetch('/aura/asr', {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body,
-              });
-            let response;
-            try {
-              response = await call();
-            } catch (first) {
-              diag('asr_retry', { message: String((first && first.message) || first).slice(0, 120) });
-              await new Promise((resolve) => setTimeout(resolve, 250));
-              response = await call();
-            }
-            const payload = await response.json().catch(() => ({}));
-            if (!response.ok) {
-              diag('asr_error', { status: response.status, error: String(payload.error || '').slice(0, 160) });
-              throw new Error(payload.error || 'speech to text failed');
-            }
-            const text = String(payload.text || '').trim();
-            diag('asr', { bytes: pcm.length, chars: text.length, empty: text.length === 0 });
-            /* Silence is an outcome, not a failure: nothing is submitted. */
-            if (text) {
-              setHeard(text);
-              await submitText(text);
-            }
-          } catch (failure) {
-            diag('asr_failed', { message: String((failure && failure.message) || failure).slice(0, 160) });
-            setError(String((failure && failure.message) || failure));
-          } finally {
-            setTranscribing(false);
-            /* Either way the turn is over, so the microphone closes here. */
-            stopCapture();
-          }
-        },
-        [stopCapture, submitText],
-      );
-
       const startCapture = React.useCallback(async () => {
         captureRef.current = null;
         setError(null);
         setHeard('');
+        partialRef.current = { text: '', at: 0 };
+        const turn = { socket: null, release: null, started: false };
+
+        const finishTurn = (reason) => {
+          diag('turn_finish', { reason });
+          try {
+            turn.socket.send(JSON.stringify({ type: 'listen', state: 'stop' }));
+          } catch {
+            /* the socket is gone; stopCapture still happens below */
+          }
+        };
+
         try {
           const media = navigator.mediaDevices;
           if (!media || typeof media.getUserMedia !== 'function') {
@@ -936,6 +892,58 @@ registerProcessor('aura-capture', AuraCapture);`;
           }
           const AudioCtor = window.AudioContext || window.webkitAudioContext;
           if (!AudioCtor) throw new Error('This browser exposes no Web Audio.');
+
+          const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+          const socket = new WebSocket(`${scheme}://${location.host}/aura/asr/live`);
+          turn.socket = socket;
+
+          const finalText = new Promise((resolve) => {
+            turn.release = resolve;
+            socket.onmessage = (event) => {
+              let message;
+              try {
+                message = JSON.parse(String(event.data));
+              } catch {
+                return;
+              }
+              if (message.type === 'hello') {
+                socket.send(JSON.stringify({ type: 'listen', state: 'start', mode: 'manual' }));
+                return;
+              }
+              if (message.type === 'listen' && message.state === 'start') {
+                turn.started = true;
+                return;
+              }
+              if (message.type === 'stt') {
+                const text = String(message.text || '');
+                if (message.partial) {
+                  partialRef.current = { text, at: Date.now() };
+                  setHeard(text);
+                  return;
+                }
+                turn.release({ text });
+                return;
+              }
+              if (message.type === 'error') {
+                turn.release({ error: message.message || 'the recognizer failed' });
+              }
+            };
+            socket.onopen = () => {
+              socket.send(
+                JSON.stringify({
+                  type: 'hello',
+                  transport: 'websocket',
+                  audio_params: { format: 'pcm16', sample_rate: SAMPLE_RATE, channels: 1, frame_duration: 100 },
+                }),
+              );
+            };
+            socket.onerror = () => {
+              diag('live_error', { phase: 'socket' });
+              turn.release({ error: 'the speech socket failed' });
+            };
+            setTimeout(() => turn.release({ error: 'the recognizer did not answer' }), 12000);
+          });
+
           const stream = await media.getUserMedia({
             audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
           });
@@ -953,32 +961,60 @@ registerProcessor('aura-capture', AuraCapture);`;
           source.connect(node);
           node.connect(sink);
           sink.connect(audio.destination);
-          const vad = createVad((pcm, reason, spoken) => {
-            diag('capture_end', {
-              reason,
-              bytes: pcm.length,
-              ms: Math.round((pcm.length / 2 / SAMPLE_RATE) * 1000),
-              speech: spoken,
-            });
-            /* The reference returns an empty buffer when nobody spoke. */
-            if (!spoken) return;
-            /* Below the reference's floor there was no instruction to send. */
-            if (pcm.length < MIN_CAPTURE_BYTES) return;
-            /* A flush is a teardown, not an ending: only send a real utterance. */
-            if (reason === 'flush' && pcm.length < MIN_FLUSH_BYTES) {
-              diag('capture_dropped', { reason, bytes: pcm.length });
-              return;
-            }
-            void transcribe(pcm);
+
+          const vad = createVad({
+            onChunk(pcm, level, peak) {
+              if (!turn.started) return;
+              try {
+                if (socket.readyState === 1) socket.send(pcm.buffer);
+              } catch {
+                /* a dead socket ends the turn on its own */
+              }
+              /* The reference's second endpoint: the transcript stopped
+               * changing while the voice already dropped. */
+              const partial = partialRef.current;
+              if (!partial.text) return;
+              if (Date.now() - partial.at >= STABLE_MS && level <= 0.65 * peak) vad.end('stable');
+            },
+            onEnd(reason, spoke, ms) {
+              diag('capture_end', { reason, ms, speech: spoke });
+              if (reason === 'no_speech') {
+                stopCapture();
+                return;
+              }
+              finishTurn(reason);
+            },
           });
+
+          void finalText.then(async (result) => {
+            if (result.error) {
+              diag('live_final_error', { error: String(result.error).slice(0, 160) });
+              setError(String(result.error));
+            } else {
+              const text = String(result.text || '').trim();
+              diag('asr', { chars: text.length, empty: text.length === 0 });
+              if (text) {
+                setHeard(text);
+                await submitText(text);
+              }
+            }
+            stopCapture();
+          });
+
           node.port.onmessage = (event) => vad.push(event.data);
-          captureRef.current = { stream, audio, source, node, sink, vad };
+          captureRef.current = { stream, audio, source, node, sink, vad, socket };
           setListening(true);
           diag('mic_start', { rate: audio.sampleRate });
         } catch (failure) {
+          diag('mic_error', { message: String((failure && failure.message) || failure).slice(0, 160) });
           setError(String((failure && failure.message) || failure));
+          try {
+            if (turn.socket) turn.socket.close();
+          } catch {
+            /* already closed */
+          }
         }
-      }, [transcribe]);
+      }, [submitText, stopCapture]);
 
       const toggleMic = React.useCallback(() => {
         if (captureRef.current) stopCapture();

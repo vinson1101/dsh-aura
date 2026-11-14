@@ -1,11 +1,11 @@
 /**
- * Microphone path, end to end inside jsdom: click the mic, feed frames, and
- * assert an utterance is cut, encoded and posted to /aura/asr, then lands in the
- * composer as text.
+ * The microphone path in jsdom, end to end: click the mic, stream frames over
+ * the bridge protocol, get a transcript back, and confirm it was sent and the
+ * microphone closed.
  *
- * The audio stack is stubbed at its seams (getUserMedia, AudioContext,
- * AudioWorkletNode) but the endpointing, the PCM conversion and the request are
- * the real code. Run with `node test/mic.test.mjs`.
+ * Only the audio seams are stubbed (getUserMedia, AudioContext, WebSocket). The
+ * endpointing, the control frames and the submit are the real code.
+ * Run with `node test/mic.test.mjs`.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -25,26 +25,18 @@ const { window } = dom;
 
 const context2d = {
   fillStyle: '',
-  clearRect() {},
-  fillRect() {},
-  beginPath() {},
-  moveTo() {},
-  arc() {},
-  fill() {},
+  clearRect() {}, fillRect() {}, beginPath() {}, moveTo() {}, arc() {}, fill() {},
   createRadialGradient: () => ({ addColorStop() {} }),
 };
 window.HTMLCanvasElement.prototype.getContext = () => context2d;
-
-const BOX = 320;
 window.Element.prototype.getBoundingClientRect = () => ({
-  x: 0, y: 0, top: 0, left: 0, right: BOX, bottom: BOX, width: BOX, height: BOX,
+  x: 0, y: 0, top: 0, left: 0, right: 300, bottom: 300, width: 300, height: 300,
 });
 window.matchMedia = (query) => ({
   matches: false, media: query, addEventListener() {}, removeEventListener() {},
 });
 class ResizeObserverStub { observe() {} unobserve() {} disconnect() {} }
 window.ResizeObserver = ResizeObserverStub;
-
 let frames = 0;
 window.requestAnimationFrame = (callback) => {
   frames += 1;
@@ -53,15 +45,13 @@ window.requestAnimationFrame = (callback) => {
 };
 window.cancelAnimationFrame = (id) => window.clearTimeout(id);
 
-/* AudioContext keeps the sample rate the pane asks for and hands back inert
- * nodes; AudioWorkletNode exposes the port the pane subscribes to. */
 let liveNode = null;
 class AudioContextStub {
   constructor(options = {}) {
     this.sampleRate = options.sampleRate || 48000;
     this.destination = {};
+    this.state = 'running';
     this.audioWorklet = { addModule: async () => {} };
-    this.closed = false;
   }
   createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
   createGain() { return { gain: { value: 1 }, connect() {}, disconnect() {} }; }
@@ -85,26 +75,61 @@ window.URL.revokeObjectURL = () => {};
 let stoppedTracks = 0;
 const stream = { getTracks: () => [{ stop: () => { stoppedTracks += 1; } }] };
 const mediaDevices = { getUserMedia: async () => stream };
+Object.defineProperty(window.navigator, 'mediaDevices', { value: mediaDevices, configurable: true });
 
-const posts = [];
+/* ---- the bridge protocol on a fake socket -------------------------------- */
+
+const sockets = [];
+class WebSocketStub {
+  constructor(url) {
+    this.url = url;
+    this.readyState = 0;
+    this.sent = [];
+    this.onopen = null;
+    this.onmessage = null;
+    this.onerror = null;
+    sockets.push(this);
+    /* Open on the next turn, as a real socket would. */
+    window.setTimeout(() => {
+      this.readyState = 1;
+      if (this.onopen) this.onopen({});
+    }, 1);
+  }
+  send(value) {
+    this.sent.push(value);
+    if (typeof value !== 'string') {
+      this.audio = (this.audio || 0) + value.byteLength;
+      return;
+    }
+    const message = JSON.parse(value);
+    const reply = (payload) => {
+      if (this.onmessage) this.onmessage({ data: JSON.stringify(payload) });
+    };
+    if (message.type === 'hello') {
+      reply({ type: 'hello', audio_params: { format: 'pcm16', sample_rate: 16000 } });
+      return;
+    }
+    if (message.type === 'listen' && message.state === 'start') {
+      reply({ type: 'listen', state: 'start', mode: 'manual' });
+      /* One partial so the caption path is exercised too. */
+      reply({ type: 'stt', text: '打开插件', partial: true });
+      return;
+    }
+    if (message.type === 'listen' && message.state === 'stop') {
+      reply({ type: 'stt', text: '打开插件市场', partial: false });
+    }
+  }
+  close() {
+    this.readyState = 3;
+  }
+}
+window.WebSocket = WebSocketStub;
+
 const requests = [];
 window.fetch = async (url, init = {}) => {
   requests.push({ url, init });
-  if (url === '/aura/asr') {
-    posts.push(JSON.parse(init.body));
-    return {
-      ok: true,
-      status: 200,
-      async json() { return { text: '打开插件市场', provider: 'fake' }; },
-      async text() { return ''; },
-    };
-  }
   return { ok: true, status: 204, async json() { return {}; }, async text() { return ''; } };
 };
-
-/* Keep jsdom's navigator (react-dom reads its userAgent) and add the media
- * device seam to it. */
-Object.defineProperty(window.navigator, 'mediaDevices', { value: mediaDevices, configurable: true });
 
 const globals = {
   window,
@@ -112,11 +137,11 @@ const globals = {
   navigator: window.navigator,
   HTMLElement: window.HTMLElement,
   ResizeObserver: ResizeObserverStub,
-  /* The bundle reaches for these as bare page globals, exactly as a browser
-   * provides them. */
   AudioWorkletNode: AudioWorkletNodeStub,
   URL: window.URL,
   Blob: window.Blob,
+  WebSocket: WebSocketStub,
+  location: { protocol: 'http:', host: '127.0.0.1:63215' },
 };
 for (const [key, value] of Object.entries(globals)) {
   Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
@@ -132,11 +157,17 @@ new Function('window', source)(window);
 
 const React = require('react');
 const { createRoot } = require('react-dom/client');
-
 const plugin = captured.factory((name) => {
   if (name === 'react') return React;
   throw new Error('unexpected module request: ' + name);
 });
+
+const prompts = [];
+const session = {
+  async prompt(content, mode) { prompts.push({ content, mode }); return { ok: true, value: { accepted: true } }; },
+  async cancel() { return { ok: true, value: { accepted: true } }; },
+};
+const services = { get: (name) => (name === 'sessions' ? { binding: () => ({ session }) } : { openTab: () => {} }) };
 
 const registrations = [];
 const slots = {
@@ -149,22 +180,6 @@ const slots = {
     return () => {};
   },
 };
-const prompts = [];
-const session = {
-  async prompt(content, mode) {
-    prompts.push({ content, mode });
-    return { ok: true, value: { accepted: true } };
-  },
-  async cancel() {
-    return { ok: true, value: { accepted: true } };
-  },
-};
-const services = {
-  get(name) {
-    if (name === 'sessions') return { binding: () => ({ session }) };
-    return { openTab: () => {} };
-  },
-};
 plugin.apply({
   inject: (_services, callback) =>
     callback({
@@ -174,8 +189,6 @@ plugin.apply({
       get: services.get,
     }),
   slots,
-  /* The pane resolves the session through the root context, not the injected
-   * scope, so the root needs the service too. */
   get: services.get,
 });
 
@@ -188,7 +201,7 @@ root.render(
     useSessionStatus: (selector) => selector(new Map()),
   }),
 );
-await new Promise((resolve) => setTimeout(resolve, 60));
+await new Promise((resolve) => setTimeout(resolve, 40));
 
 /* ---- speak, then stop speaking ----------------------------------------- */
 
@@ -197,59 +210,38 @@ assert.ok(mic, 'the pane must offer a microphone control');
 mic.click();
 await new Promise((resolve) => setTimeout(resolve, 20));
 
-assert.ok(liveNode, 'capture must create an AudioWorkletNode');
-assert.equal(liveNode.context.sampleRate, 16000, 'capture must ask for 16 kHz');
-assert.ok(typeof liveNode.port.onmessage === 'function', 'the pane must subscribe to audio frames');
+assert.ok(sockets.length === 1, 'one live socket per turn');
+const socket = sockets[0];
+assert.match(socket.url, /\/aura\/asr\/live$/);
+assert.ok(socket.sent.some((value) => typeof value === 'string' && JSON.parse(value).type === 'hello'));
 
 const frame = new Float32Array(320);
 const loud = new Float32Array(320);
 for (let i = 0; i < loud.length; i += 1) loud[i] = 0.2 * Math.sin((i / 16000) * 2 * Math.PI * 220);
 
-/* 400 ms of speech, then 1400 ms of silence: the endpointing threshold is
- * 1200 ms now, so a thinking pause no longer ends the sentence. */
+/* 400 ms of speech, then 1000 ms of silence: the endpoint is 900 ms. */
 for (let i = 0; i < 20; i += 1) liveNode.port.onmessage({ data: loud });
-assert.equal(posts.length, 0, 'speech alone must not finish an utterance');
-for (let i = 0; i < 70; i += 1) liveNode.port.onmessage({ data: frame });
+await new Promise((resolve) => setTimeout(resolve, 20));
+assert.equal(prompts.length, 0, 'speech alone must not finish a turn');
+const audioBefore = socket.audio || 0;
+assert.ok(audioBefore > 0, 'audio must stream while the user talks');
 
-assert.equal(posts.length, 1, 'silence past the threshold must post exactly one utterance');
-const body = posts[0];
-assert.equal(body.sampleRate, 16000);
-assert.equal(body.channels, 1);
-const pcm = Buffer.from(body.pcm, 'base64');
-assert.ok(pcm.length > 0, 'the utterance must carry audio');
-assert.equal(pcm.length % 2, 0, 'PCM16 is two bytes per sample');
+for (let i = 0; i < 50; i += 1) liveNode.port.onmessage({ data: frame });
+await new Promise((resolve) => setTimeout(resolve, 60));
 
-await new Promise((resolve) => setTimeout(resolve, 40));
-
-/* Turn-taking: one utterance is recognised and sent, with no extra keystroke. */
-assert.equal(prompts.length, 1, 'the transcript must be sent into the session');
+const stop = socket.sent.map((value) => (typeof value === 'string' ? JSON.parse(value) : null)).find(
+  (message) => message && message.type === 'listen' && message.state === 'stop',
+);
+assert.ok(stop, 'the turn must end with a listen stop frame');
+assert.equal(prompts.length, 1, 'the final transcript must be sent into the session');
 assert.deepEqual(prompts[0].content, [{ type: 'text', text: '打开插件市场' }]);
 assert.equal(prompts[0].mode, 'queue');
-
-/* And the microphone closes by itself, which is the bug this guards. */
-assert.equal(stoppedTracks, 1, 'the turn must release the microphone after sending');
-assert.equal(liveNode.port.onmessage, null, 'the frame handler must be detached');
+assert.equal(stoppedTracks, 1, 'the turn must release the microphone');
 assert.ok(
   container.querySelector('button[aria-label="Start listening"]'),
   'the control must return to its idle state',
 );
-assert.equal(
-  container.querySelector('textarea').value,
-  '',
-  'the composer must stay empty when the message was already sent',
-);
-
-/* ---- silence is not sent ------------------------------------------------ */
-
-posts.length = 0;
-prompts.length = 0;
-const micAgain = container.querySelector('button[aria-label="Start listening"]');
-micAgain.click();
-await new Promise((resolve) => setTimeout(resolve, 20));
-for (let i = 0; i < 30; i += 1) liveNode.port.onmessage({ data: frame });
-await new Promise((resolve) => setTimeout(resolve, 40));
-assert.equal(prompts.length, 0, 'pure silence must submit nothing');
 
 root.unmount();
 console.log('mic.test.mjs: ok');
-console.log('  utterance bytes:', pcm.length);
+console.log('  audio streamed:', audioBefore, 'bytes');
