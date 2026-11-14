@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.21.2';
+const AURA_VERSION = '0.21.3';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1227,6 +1227,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       }, []);
 
       React.useEffect(() => {
+        diag('run_watch', { running, was: wasRunning.current, wants: speakNext.current });
         if (wasRunning.current && !running) {
           setSettledAt(Date.now() + SETTLED_MS);
           /* A run we started ends here: read its reply and speak it. */
@@ -1259,6 +1260,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               return false;
             }
             speakNext.current = true;
+            diag('speak_armed', { chars: trimmed.length });
             return true;
           } catch (failure) {
             setError(String((failure && failure.message) || failure));
