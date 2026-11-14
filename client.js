@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.19.1';
+const AURA_VERSION = '0.19.2';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -556,20 +556,10 @@ registerProcessor('aura-capture', AuraCapture);`;
       /* Self-contained glass: the plugin decides its own translucency, so it
        * looks the same in a bare profile as in a decorated one. The theme
        * colour is used only as the tint; the alpha is ours. */
-      /* The same recipe the interface uses for frosted surfaces: a light tint,
-       * heavy blur, boosted saturation and a slight brightness lift. Mixing a
-       * dark tint and calling it glass is what made earlier versions look like
-       * smoked plastic. --aura-alpha is the one knob worth turning. */
       .aura-card { position: absolute; top: 48px; right: 8px; width: 276px; padding: 14px;
-        max-height: calc(100% - 56px); overflow-y: auto; overscroll-behavior: contain;
-        display: grid; gap: 12px; border-radius: 16px;
-        background: rgba(255, 255, 255, .09);
-        background: color-mix(in srgb, var(--aura-surface, #7f8ba0) var(--aura-alpha, 26%), transparent);
-        border: 1px solid rgba(255, 255, 255, .2);
-        backdrop-filter: blur(24px) saturate(190%) brightness(1.12);
-        -webkit-backdrop-filter: blur(24px) saturate(190%) brightness(1.12);
-        box-shadow: 0 24px 56px rgba(0, 0, 0, .34), inset 0 1px 0 rgba(255, 255, 255, .18);
-        z-index: 6; }
+      max-height: calc(100% - 56px); overflow-y: auto; overscroll-behavior: contain;
+      display: grid; gap: 12px; border-radius: 14px; border: 1px solid rgba(127,127,127,.24);
+      background: var(--dsw-alias-bg-base, #191b21); box-shadow: 0 18px 44px rgba(0,0,0,.34); z-index: 6; }
       .aura-id { display: flex; align-items: center; gap: 10px; }
       .aura-close { margin-left: auto; width: 24px; height: 24px; border-radius: 999px; border: none;
         background: transparent; color: inherit; font: inherit; font-size: 14px; line-height: 1;
