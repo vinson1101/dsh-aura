@@ -12,7 +12,7 @@ the stylesheets' rules that match the element.
 
 | Attempt | Background set by the plugin | Computed result |
 | --- | --- | --- |
-| `var(--dsw-alias-bg-base)` (v0.17.x, restored in v0.19.2) | theme base | `rgb(13, 21, 36)` — **opaque** |
+| `var(--dsw-alias-bg-base)` (v0.17.x, restored in v0.19.2) | theme base | `rgb(13, 21, 36)` — **opaque**, because a `[role="dialog"]` rule overrode it |
 | `var(--dsw-alias-bg-overlay)` (v0.18.6) | overlay surface | `rgb(13, 21, 36)` — **opaque** |
 | `rgba(22,24,30,.62)` + `color-mix(… 62%, transparent)` (v0.18.7) | translucent | reported as "no change" by eye |
 | `color-mix(--aura-surface 26%, transparent)` + `blur(24px) saturate(190%)` (v0.19.0) | translucent | computed `rgb(13, 21, 36)`, `backdrop: none` |
@@ -46,6 +46,14 @@ identical: none of them reached the element.
 The card is a popover inside a side pane, not a modal dialog. It now uses
 `role="group"` with a descriptive label — which suits its behaviour — and the
 forced repaint no longer matches.
+
+### Confirmed working (v0.20.6)
+
+After the role change the beacon reports the glass that was intended:
+
+```
+paneWidth 300 | background rgba(120, 132, 152, 0.18) | backdrop blur(22px) saturate(1.6)
+```
 
 **Lesson:** when a colour change has no visible effect, read the winning rule
 before touching the colour. `getComputedStyle` alone shows the result, not the
