@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.18.7';
+const AURA_VERSION = '0.18.8';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -291,7 +291,8 @@ window.__ModuleLoader__.load({
     /** Otherwise a real pause still wins, just later. */
     const LONG_QUIET_CHUNKS = 20;
     const NO_SPEECH_CHUNKS = 40;
-    const MAX_CHUNKS = 120;
+    /** Streaming grows nothing per chunk, so a long dictation is allowed. */
+    const MAX_CHUNKS = 600;
     const THRESHOLD_FLOOR = 450;
     const THRESHOLD_FACTOR = 1.65;
     const PEAK_DECAY = 0.975;
@@ -1205,6 +1206,11 @@ registerProcessor('aura-capture', AuraCapture);`;
 
         const finishTurn = (reason) => {
           diag('turn_finish', { reason });
+          /* The clock starts here: waiting for the transcript after "stop" is
+           * what can hang, not the length of the utterance. */
+          window.setTimeout(() => {
+            if (turn.release) turn.release({ error: 'the recognizer did not answer' });
+          }, 10000);
           try {
             turn.socket.send(JSON.stringify({ type: 'listen', state: 'stop' }));
           } catch {
@@ -1269,7 +1275,6 @@ registerProcessor('aura-capture', AuraCapture);`;
               diag('live_error', { phase: 'socket' });
               turn.release({ error: 'the speech socket failed' });
             };
-            setTimeout(() => turn.release({ error: 'the recognizer did not answer' }), 12000);
           });
 
           const stream = await media.getUserMedia({
