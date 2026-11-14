@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.22.0';
+const AURA_VERSION = '0.22.1';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1060,6 +1060,15 @@ registerProcessor('aura-capture', AuraCapture);`;
       );
       const partialRef = React.useRef({ text: '', at: 0 });
       const voiceRef = React.useRef(null);
+      /* capture.py: ControlGate. While the speaker is producing sound, the
+       * microphone hears it: drop those frames instead of transcribing an echo,
+       * and keep dropping for a moment after it stops, because the tail is
+       * still buffered in the input. */
+      const gateRef = React.useRef({ active: false, until: 0 });
+      const gated = () => {
+        const gate = gateRef.current;
+        return gate.active || Date.now() < gate.until;
+      };
       const levelRef = React.useRef(0);
       /* Survives a reload: shipping a new bundle reloads the page mid-run, and
        * the reply of that run must still be spoken by the new instance. */
@@ -1092,6 +1101,8 @@ registerProcessor('aura-capture', AuraCapture);`;
         voiceRef.current = null;
         levelRef.current = 0;
         setTalking(false);
+        gateRef.current.active = false;
+        gateRef.current.until = Date.now() + 300;
         if (!playback) return;
         for (const source of playback.sources || []) {
           try {
@@ -1184,6 +1195,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             };
 
             voiceRef.current = playback;
+            gateRef.current.active = true;
             setTalking(true);
             if (!existing) playback.frame = window.requestAnimationFrame(meter);
             diag('play_start', { state: audio.state, rate });
@@ -1483,6 +1495,11 @@ registerProcessor('aura-capture', AuraCapture);`;
         setError(null);
         setHeard('');
         partialRef.current = { text: '', at: 0 };
+        /* Talking over the answer is a request to stop hearing it. */
+        if (voiceRef.current) {
+          stopSpeaking();
+          gateRef.current.until = 0;
+        }
         const turn = { socket: null, release: null, started: false };
 
         const finishTurn = (reason) => {
@@ -1621,7 +1638,12 @@ registerProcessor('aura-capture', AuraCapture);`;
             stopCapture();
           });
 
-          node.port.onmessage = (event) => vad.push(event.data);
+          node.port.onmessage = (event) => {
+            /* Speaking over the answer would otherwise feed the speaker back
+             * into the recognizer. */
+            if (gated()) return;
+            vad.push(event.data);
+          };
           captureRef.current = { stream, audio, source, node, sink, vad, socket };
           setListening(true);
           diag('mic_start', { rate: audio.sampleRate });
