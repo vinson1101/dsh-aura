@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.24.0';
+const AURA_VERSION = '0.24.1';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -36,6 +36,36 @@ window.__ModuleLoader__.load({
      * from outside the app, so each stage posts to the host's diagnostic route
      * and lands in $DSH_HOME/aura-diag.jsonl.
      */
+    /**
+     * Ask the host which version is installed and reload when it differs.
+     *
+     * Module scope on purpose: a crash inside the pane took the earlier
+     * watcher with it and left a broken page with no way to recover.
+     */
+    let watching = false;
+    function watchForNewVersion() {
+      if (watching || typeof window === 'undefined') return;
+      /* A test page has no host to ask, and an endless timer would stop the
+       * process from ever exiting. */
+      if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent || '')) return;
+      watching = true;
+      const tick = async () => {
+        try {
+          const response = await fetch('/aura/version', { cache: 'no-store' });
+          const payload = await response.json();
+          if (payload && payload.version && payload.version !== AURA_VERSION) {
+            diag('reload_for_version', { running: AURA_VERSION, installed: payload.version });
+            window.location.reload();
+            return;
+          }
+        } catch {
+          /* the host is restarting; try again next tick */
+        }
+        window.setTimeout(tick, 5000);
+      };
+      window.setTimeout(tick, 4000);
+    }
+
     function diag(stage, extra) {
       const line = JSON.stringify({ stage, v: AURA_VERSION, at: Date.now(), ...extra });
       try {
@@ -910,22 +940,45 @@ registerProcessor('aura-capture', AuraCapture);`;
         if (!failure) return this.props.children;
         const text = (failure && (failure.stack || failure.message)) || String(failure);
         return h(
-          'pre',
-          {
-            style: {
-              margin: 0,
-              padding: 12,
-              minHeight: 120,
+          'div',
+          { style: { display: 'grid', gap: 8, padding: 12 } },
+          h(
+            'button',
+            {
+              type: 'button',
+              onClick: () => window.location.reload(),
+              style: {
+                justifySelf: 'start',
+                height: 28,
+                padding: '0 12px',
+                borderRadius: 8,
+                border: '1px solid rgba(255,255,255,.24)',
+                background: 'transparent',
+                color: 'inherit',
+                font: 'inherit',
+                fontSize: 12,
+                cursor: 'pointer',
+              },
+            },
+            'Reload Aura',
+          ),
+          h(
+            'pre',
+            {
+              style: {
+                margin: 0,
+                minHeight: 120,
               fontFamily: 'ui-monospace, SFMono-Regular, monospace',
               fontSize: 11,
               lineHeight: 1.5,
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
               color: 'var(--dsw-alias-text-danger, #e5484d)',
-              overflow: 'auto',
+                overflow: 'auto',
+              },
             },
-          },
-          text,
+            text,
+          ),
         );
       }
     }
@@ -1444,31 +1497,7 @@ registerProcessor('aura-capture', AuraCapture);`;
        * differs — the alternative is what happened here: hours of changes that
        * never ran.
        */
-      React.useEffect(() => {
-        let stopped = false;
-        let timer;
-        const check = async () => {
-          try {
-            const response = await fetch('/aura/version', { cache: 'no-store' });
-            const payload = await response.json();
-            const installed = String(payload.version || '');
-            if (!stopped && installed && installed !== AURA_VERSION) {
-              diag('reload_for_version', { running: AURA_VERSION, installed });
-              window.location.reload();
-              return;
-            }
-          } catch {
-            /* offline or the route is older than this bundle */
-          }
-          if (!stopped) timer = window.setTimeout(check, 5000);
-        };
-        timer = window.setTimeout(check, 4000);
-        return () => {
-          stopped = true;
-          if (timer !== undefined) window.clearTimeout(timer);
-        };
-      }, []);
-
+      /* The version probe lives at module scope now: see watchForNewVersion. */
       React.useEffect(() => {
         diag('run_watch', { running, was: wasRunning.current, wants: speakNext.current });
         runningRef.current = running;
@@ -2169,6 +2198,9 @@ registerProcessor('aura-capture', AuraCapture);`;
       inject: ['slots'],
       apply(ctx) {
         diag('apply');
+        /* Before anything can throw: the recovery probe must not depend on the
+         * pane rendering successfully. */
+        watchForNewVersion();
         services = ctx;
         /* Filled by the tab registration so the header button can open it. */
         let open = null;
