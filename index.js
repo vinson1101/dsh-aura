@@ -403,6 +403,14 @@ export function apply(ctx, config = {}) {
           }
           /* Raw PCM, chunked: the browser plays it as it arrives instead of
            * waiting for the whole sentence to be synthesised. */
+          /* turns.py: the writer checks cancellation on every frame. Here the
+           * cancellation is the client going away. */
+          const cancelled = new AbortController();
+          let closed = false;
+          res.on('close', () => {
+            closed = true;
+            cancelled.abort();
+          });
           try {
             res.writeHead(200, {
               'content-type': 'audio/L16',
@@ -415,11 +423,14 @@ export function apply(ctx, config = {}) {
             const { spoken } = speakablePrefix(text, 240);
             const segments = textSegments(spoken, 60);
             for (const segment of segments) {
+              if (closed) break;
               await tts.stream({
                 model,
+                signal: cancelled.signal,
                 text: segment,
                 voice,
                 onChunk: (chunk) => {
+                  if (closed) return;
                   try {
                     res.write(chunk);
                   } catch {

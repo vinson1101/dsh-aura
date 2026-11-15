@@ -198,6 +198,11 @@ export function speakablePrefix(text, maxChars = 240) {
 export async function streamSynthesize(options) {
   const { text, apiKey, baseUrl, voice, sampleRate, timeoutMs, signal, onChunk } = options;
   const model = options.model || 'cosyvoice-v3-flash';
+  if (signal && signal.aborted) {
+    const stop = new Error('speech cancelled');
+    stop.name = 'AbortError';
+    throw stop;
+  }
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(), timeoutMs);
   const composed = signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal;

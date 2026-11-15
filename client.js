@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.25.5';
+const AURA_VERSION = '0.26.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1348,6 +1348,15 @@ registerProcessor('aura-capture', AuraCapture);`;
       /** Stop playback and let the sphere settle. */
       const stopSpeaking = React.useCallback(() => {
         speakGeneration.current += 1;
+        const abort = speechAbort.current;
+        speechAbort.current = null;
+        if (abort) {
+          try {
+            abort.abort();
+          } catch {
+            /* already settled */
+          }
+        }
         const playback = voiceRef.current;
         voiceRef.current = null;
         levelRef.current = 0;
@@ -1378,16 +1387,31 @@ registerProcessor('aura-capture', AuraCapture);`;
        * turn's queued work is discarded rather than played. */
       const speakQueue = React.useRef(Promise.resolve());
       const speakGeneration = React.useRef(0);
+      /* Set when the user stops the voice — by interrupting, by pressing stop,
+       * or by hanging up. Streaming keeps producing sentences, and without this
+       * every one of them restarts the voice a second later, which is what
+       * "I cannot interrupt it" actually was. */
+      const mutedRef = React.useRef(false);
+      /* turns.py: cancelling a turn has to reach the work in flight, not just
+       * the player. This aborts the synth request that is still streaming. */
+      const speechAbort = React.useRef(null);
 
       const speakNow = React.useCallback(
         async (text, voice, generation) => {
           const spoken = String(text || '').trim();
           if (!spoken) return;
           if (generation !== speakGeneration.current) return;
+          if (mutedRef.current) {
+            diag('speak_muted', { chars: spoken.length });
+            return;
+          }
           try {
             diag('tts_request', { chars: spoken.length });
+            const controller = new AbortController();
+            speechAbort.current = controller;
             const response = await fetch('/aura/tts', {
               method: 'POST',
+              signal: controller.signal,
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({
                 text: spoken.slice(0, 2000),
@@ -1478,6 +1502,14 @@ registerProcessor('aura-capture', AuraCapture);`;
             let carry = new Uint8Array(0);
             let chunks = 0;
             for (;;) {
+              if (mutedRef.current || generation !== speakGeneration.current) {
+                try {
+                  await reader.cancel();
+                } catch {
+                  /* already closed */
+                }
+                break;
+              }
               const { done, value } = await reader.read();
               if (done) break;
               if (!value) continue;
@@ -1667,6 +1699,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               return false;
             }
             replyBefore.current = lastAssistantText(props.sessionId);
+            mutedRef.current = false;
             armSpeak(true);
             diag('speak_armed', { chars: trimmed.length, before: replyBefore.current.length });
             return true;
@@ -1948,6 +1981,7 @@ registerProcessor('aura-capture', AuraCapture);`;
                 bargeRef.current.streak = 0;
                 gateRef.current.active = false;
                 gateRef.current.until = 0;
+                mutedRef.current = true;
                 stopSpeaking();
                 for (const frame of recent.splice(0)) vad.push(frame);
               }
@@ -1988,6 +2022,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         if (callActive) {
           choose({ mode: 'talk' });
           if (captureRef.current) stopCapture();
+          mutedRef.current = true;
           stopSpeaking();
         } else {
           choose({ mode: 'chat' });
@@ -2259,6 +2294,7 @@ registerProcessor('aura-capture', AuraCapture);`;
                     title: 'Stop',
                     'aria-label': 'Stop',
                     onClick: () => {
+                      mutedRef.current = true;
                       stopSpeaking();
                       if (runningRef.current) void stop();
                     },

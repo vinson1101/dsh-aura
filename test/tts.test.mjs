@@ -221,3 +221,39 @@ console.log('tts.test.mjs: ok');
     globalThis.fetch = realFetch;
   }
 }
+
+/* ---- a cancelled stream stops asking the provider for more ------------- */
+
+{
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push(init);
+    const sse = 'data: {"output":{"audio":{"data":"' + Buffer.alloc(32).toString('base64') + '"}}}\n\n';
+    const bytes = new TextEncoder().encode(sse);
+    return {
+      ok: true,
+      status: 200,
+      body: (async function* stream() { yield bytes; })(),
+      async text() { return ''; },
+    };
+  };
+  try {
+    const { createTts } = await import('../tts.js');
+    const tts = createTts({ model: 'cosyvoice-v3-flash' }, async () => 'k');
+    /* An already-aborted signal must not reach the network at all. */
+    const aborted = new AbortController();
+    aborted.abort();
+    let threw = false;
+    try {
+      await tts.stream({ text: '你好。', voice: 'longanyang', signal: aborted.signal, onChunk: () => {} });
+    } catch (failure) {
+      threw = true;
+      assert.match(String(failure && failure.name), /AbortError|Error/);
+    }
+    assert.equal(calls.length, 0, 'an aborted request never contacts the provider');
+    assert.ok(threw, 'and it reports the cancellation');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}

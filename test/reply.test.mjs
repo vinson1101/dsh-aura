@@ -401,5 +401,61 @@ assert.equal(ttsBodies.length, 1, 'a settled run is spoken once');
   );
 }
 
+/* ---- a stop lasts until the next turn, not until the next sentence ----- */
+
+{
+  const textarea5 = container.querySelector('textarea');
+  const setValue5 = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+  setValue5.call(textarea5, '再讲一段');
+  textarea5.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  container.querySelector('button[aria-label="Send"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  running = true;
+  render();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  eventSource.pushLive('第一句。');
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const afterFirst = ttsBodies.length;
+  assert.ok(afterFirst > 0, 'the first sentence is spoken');
+
+  /* The user interrupts: the stop control stands in for the barge-in path,
+   * which needs a microphone. */
+  const stopButton = container.querySelector('button[aria-label="Stop"]');
+  assert.ok(stopButton, 'the stop control exists while speaking');
+  stopButton.click();
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  eventSource.pushLive('第二句。');
+  eventSource.pushLive('第三句。');
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.equal(ttsBodies.length, afterFirst, 'nothing more is spoken after a stop');
+
+  /* A new turn lifts the mute. */
+  replyText = '第一句。第二句。第三句。';
+  eventSource.finish(replyText);
+  running = false;
+  render();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  const textarea6 = container.querySelector('textarea');
+  setValue5.call(textarea6, '接着说');
+  textarea6.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  container.querySelector('button[aria-label="Send"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  running = true;
+  render();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const beforeNew = ttsBodies.length;
+  eventSource.pushLive('新的回答。');
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.ok(ttsBodies.length > beforeNew, 'a new turn speaks again');
+  running = false;
+  render();
+}
+
 root.unmount();
 console.log('reply.test.mjs: ok');
+
