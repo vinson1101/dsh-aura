@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.32.0';
+const AURA_VERSION = '0.32.1';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1949,8 +1949,17 @@ registerProcessor('aura-capture', AuraCapture);`;
        * completed sentence instead of only on silence.
        */
       const startCaptureRef = React.useRef(null);
+      /** True while getUserMedia is in flight, so one capture can be opened. */
+      const openingRef = React.useRef(false);
 
       const startCapture = React.useCallback(async () => {
+        /* Opening is asynchronous; without this guard a second call slips in
+         * before the first has a stream, and two captures fight for the device. */
+        if (openingRef.current || captureRef.current) {
+          diag('mic_ignored', { opening: openingRef.current, open: Boolean(captureRef.current) });
+          return;
+        }
+        openingRef.current = true;
         captureRef.current = null;
         setError(null);
         setHeard('');
@@ -2208,9 +2217,11 @@ registerProcessor('aura-capture', AuraCapture);`;
             vad.push(event.data);
           };
           captureRef.current = { stream, audio, source, node, sink, vad, socket };
+          openingRef.current = false;
           setListening(true);
           diag('mic_start', { rate: audio.sampleRate });
         } catch (failure) {
+          openingRef.current = false;
           diag('mic_error', { message: String((failure && failure.message) || failure).slice(0, 160) });
           setError(String((failure && failure.message) || failure));
           try {
