@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.28.8';
+const AURA_VERSION = '0.28.9';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -2030,7 +2030,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               setError(String(result.error));
             } else {
               const text = String(result.text || '').trim();
-              diag('asr', { chars: text.length, empty: text.length === 0 });
+              diag('asr', { chars: text.length, empty: text.length === 0, preview: text.slice(0, 40) });
               if (text) {
                 setHeard(text);
                 await submitText(text);
@@ -2116,6 +2116,10 @@ registerProcessor('aura-capture', AuraCapture);`;
                  * person: feeding them to the recognizer is what made later
                  * transcripts contain the assistant voice. Discard them and
                  * accept that the first syllable may be cut. */
+                /* Keep a short pre-roll: the first syllable usually starts
+                 * just before the level crosses the threshold, and 400 ms is
+                 * short enough not to carry much of the speaker with it. */
+                for (const frame of recent.slice(-4)) vad.push(frame);
                 recent.length = 0;
               }
               return;
