@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.24.3';
+const AURA_VERSION = '0.25.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -177,6 +177,18 @@ window.__ModuleLoader__.load({
      *
      * The contract is `mount(canvas, readPhase) -> { refresh, dispose }`.
      */
+    /** Root-mean-square of one PCM16 frame, on the same 0..1 scale as playback. */
+    function levelOfFrame(buffer) {
+      const samples = new Int16Array(buffer);
+      if (samples.length === 0) return 0;
+      let sum = 0;
+      for (let index = 0; index < samples.length; index += 1) {
+        const value = samples[index] / 32768;
+        sum += value * value;
+      }
+      return Math.sqrt(sum / samples.length);
+    }
+
     function mountOrb(canvas, readState) {
       const ctx = canvas.getContext('2d');
       if (!ctx) return { refresh() {}, dispose() {} };
@@ -529,6 +541,14 @@ registerProcessor('aura-capture', AuraCapture);`;
       { id: 'longlaotie_v3', name: '龙老铁', trait: '东北直率男' },
       { id: 'longjielidou_v3', name: '龙杰力豆', trait: '阳光顽皮男' },
     ];
+    /* Two ways to talk. `talk` is turn-taking: open the microphone, speak,
+     * it answers, the microphone is closed. `chat` is continuous: the
+     * microphone stays open, and speaking while it is answering interrupts. */
+    const MODES = [
+      { id: 'talk', name: '对话', note: '一句一答' },
+      { id: 'chat', name: '聊天', note: '常听，可随时插话' },
+    ];
+
     const PREF_KEY = 'dsh-aura.prefs';
 
     function readPrefs() {
@@ -538,10 +558,11 @@ registerProcessor('aura-capture', AuraCapture);`;
         return {
           voice: typeof parsed.voice === 'string' ? parsed.voice : VOICES[0].id,
           model: MODELS.some((item) => item.id === parsed.model) ? parsed.model : MODELS[0].id,
+          mode: MODES.some((item) => item.id === parsed.mode) ? parsed.mode : MODES[0].id,
           avatar: typeof parsed.avatar === 'string' ? parsed.avatar : '',
         };
       } catch {
-        return { voice: VOICES[0].id, avatar: '', model: MODELS[0].id };
+        return { voice: VOICES[0].id, avatar: '', model: MODELS[0].id, mode: MODES[0].id };
       }
     }
 
@@ -1028,6 +1049,9 @@ registerProcessor('aura-capture', AuraCapture);`;
       /* Declared before the phase below reads it. */
       const [listening, setListening] = React.useState(false);
       const [error, setError] = React.useState(null);
+      /* A continuous session is always "listening" at rest, so the phase needs
+       * the mode before the preference state is declared. */
+      const modeRef = React.useRef('talk');
       const [talking, setTalking] = React.useState(false);
 
       React.useEffect(() => {
@@ -1047,6 +1071,8 @@ registerProcessor('aura-capture', AuraCapture);`;
        * then the voice, then the turn, then a pending question. */
       const phase = listening
         ? 'listening'
+        : (modeRef.current === 'chat' && !talking && !running && !error)
+          ? 'listening'
         : talking
           ? 'talking'
           : error
@@ -1107,6 +1133,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       const [transcribing, setTranscribing] = React.useState(false);
       const [heard, setHeard] = React.useState('');
       const [prefs, setPrefs] = React.useState(readPrefs);
+      modeRef.current = prefs.mode || 'talk';
       const [panelOpen, setPanelOpen] = React.useState(false);
       const [customVoice, setCustomVoice] = React.useState('');
       const paneRef = React.useRef(null);
@@ -1248,6 +1275,10 @@ registerProcessor('aura-capture', AuraCapture);`;
         const gate = gateRef.current;
         return gate.active || Date.now() < gate.until;
       };
+      /* Barge-in needs the frames the gate is dropping, so they are measured
+       * here: a voice over the speaker for ~300 ms means "stop talking". */
+      const BARGE_LEVEL = 0.055;
+      const bargeRef = React.useRef({ streak: 0, frames: [] });
       const levelRef = React.useRef(0);
       /* Survives a reload: shipping a new bundle reloads the page mid-run, and
        * the reply of that run must still be spoken by the new instance. */
@@ -1686,6 +1717,8 @@ registerProcessor('aura-capture', AuraCapture);`;
        * still talking, so the caption fills in and the turn can end on a
        * completed sentence instead of only on silence.
        */
+      const startCaptureRef = React.useRef(null);
+
       const startCapture = React.useCallback(async () => {
         captureRef.current = null;
         setError(null);
@@ -1832,12 +1865,36 @@ registerProcessor('aura-capture', AuraCapture);`;
               }
             }
             stopCapture();
+            /* Continuous mode: after the answer there is no "press to speak"
+             * again; the microphone returns by itself. */
+            if (prefsRef.current.mode === 'chat') {
+              window.setTimeout(() => {
+                if (!captureRef.current) void startCaptureRef.current();
+              }, 400);
+            }
           });
 
           node.port.onmessage = (event) => {
-            /* Speaking over the answer would otherwise feed the speaker back
-             * into the recognizer. */
-            if (gated()) return;
+            if (gated()) {
+              /* Keep the last second of audio so an interruption is
+               * transcribed from its beginning, not from its middle. */
+              const recent = bargeRef.current.frames;
+              recent.push(event.data);
+              if (recent.length > 10) recent.shift();
+              const level = levelOfFrame(event.data);
+              bargeRef.current.streak = level > BARGE_LEVEL ? bargeRef.current.streak + 1 : 0;
+              if (bargeRef.current.streak >= 3) {
+                diag('barge_in', { level: Number(level.toFixed(3)) });
+                bargeRef.current.streak = 0;
+                gateRef.current.active = false;
+                gateRef.current.until = 0;
+                stopSpeaking();
+                for (const frame of recent.splice(0)) vad.push(frame);
+              }
+              return;
+            }
+            bargeRef.current.frames.length = 0;
+            bargeRef.current.streak = 0;
             vad.push(event.data);
           };
           captureRef.current = { stream, audio, source, node, sink, vad, socket };
@@ -1853,6 +1910,7 @@ registerProcessor('aura-capture', AuraCapture);`;
           }
         }
       }, [submitText, stopCapture]);
+      startCaptureRef.current = startCapture;
 
       const toggleMic = React.useCallback(() => {
         if (captureRef.current) stopCapture();
@@ -1914,6 +1972,26 @@ registerProcessor('aura-capture', AuraCapture);`;
               h(
                 'div',
                 null,
+                h('div', { className: 'aura-cap' }, '模式'),
+                h(
+                  'div',
+                  { className: 'aura-models' },
+                  ...MODES.map((entry) =>
+                    h(
+                      'button',
+                      {
+                        type: 'button',
+                        key: entry.id,
+                        className: 'aura-model',
+                        'data-on': String((prefs.mode || MODES[0].id) === entry.id),
+                        title: entry.note,
+                        onClick: () => choose({ mode: entry.id }),
+                      },
+                      entry.name,
+                    ),
+                  ),
+                ),
+                h('div', { className: 'aura-cap' }, '模型'),
                 h(
                   'div',
                   { className: 'aura-models' },

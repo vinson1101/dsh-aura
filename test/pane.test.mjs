@@ -251,6 +251,19 @@ await new Promise((resolve) => setTimeout(resolve, 20));
 assert.equal(textarea.style.height, '34px', 'a short draft shrinks back to the floor');
 assert.equal(textarea.style.overflowY, 'hidden', 'no scrollbar when it fits');
 
+/* ---- the mode is offered, and defaults to turn-taking ------------------ */
+
+{
+  const chip = container.querySelector('button[aria-label="Aura profile"]');
+  chip.click();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const labels = Array.from(container.querySelectorAll('.aura-model')).map((node) => node.textContent);
+  assert.ok(labels.includes('对话'), 'turn-taking mode is offered: ' + labels.join(','));
+  assert.ok(labels.includes('聊天'), 'continuous mode is offered');
+  const on = Array.from(container.querySelectorAll('.aura-model[data-on="true"]')).map((node) => node.textContent);
+  assert.ok(on.includes('对话'), 'and turn-taking is the default');
+}
+
 root.unmount();
 console.log('pane.test.mjs: ok');
 console.log('  canvas backing store:', canvas.width + 'x' + canvas.height);
