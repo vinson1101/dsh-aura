@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.28.6';
+const AURA_VERSION = '0.28.7';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1551,7 +1551,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             voiceRef.current = playback;
             bargeRef.current.startedAt = Date.now();
             bargeRef.current.streak = 0;
-            bargeRef.current.echo = 0;
+            bargeRef.current.echo = null;
             bargeRef.current.interruptedAt = -1;
             playback.pending += 1;
             window.clearTimeout(playback.finishTimer);
@@ -2059,9 +2059,12 @@ registerProcessor('aura-capture', AuraCapture);`;
               /* The first frames of playback measure the speaker leaking back
                * into the microphone; that becomes the reference a real voice
                * has to beat. */
-              /* The speaker does not leak back at a constant level: it follows
-               * the voice. Keep the loudest leak seen during this playback. */
-              state.echo = Math.max(state.echo || 0, level);
+              /* Average, not maximum: the leak follows the voice, and its peak is
+               * as loud as a person. The mean sits well below speech, which is
+               * what makes speech detectable at all. */
+              state.echo = state.echo === null || state.echo === undefined
+                ? level
+                : state.echo * 0.9 + level * 0.1;
               state.all = Math.max(state.all, level);
               /* The threshold follows the room: an air conditioner or a fan is
                * not an interruption, a voice over it is. */
@@ -2074,7 +2077,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               else state.floor = state.floor * 0.995 + level * 0.005;
               /* Room tone, its own speaker, and an absolute floor: the noisiest
                * of the three decides what counts as a voice. */
-              const threshold = Math.max(BARGE_LEVEL, state.floor * 4, (state.echo || 0) * 1.6);
+              const threshold = Math.max(BARGE_LEVEL, state.floor * 4, (state.echo || 0) * 1.5);
               /* Nothing below the loudest leak plus a margin can be a voice. */
               const settled = Date.now() - (state.startedAt || 0) > BARGE_GUARD_MS;
               state.streak = settled && level > threshold ? state.streak + 1 : 0;
