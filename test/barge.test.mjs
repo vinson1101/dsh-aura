@@ -36,7 +36,7 @@ assert.equal(correlation([0.1], [0.2]), 0, 'too few samples is 0');
 
 /* And the decision has to use it. */
 assert.ok(
-  source.includes('const echoLike = follows > 0.55'),
+  source.includes('const echoLike = follows > 0.8'),
   'the barge decision consults the correlation',
 );
 assert.ok(

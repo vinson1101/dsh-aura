@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.31.3';
+const AURA_VERSION = '0.31.5';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1384,11 +1384,11 @@ registerProcessor('aura-capture', AuraCapture);`;
        * control ducks the microphone and the same voice measures 0.03 instead
        * of 0.3. The ratio to the room and to the echo is what holds, so the
        * absolute value is only a sanity bound. */
-      const BARGE_LEVEL = 0.03;
+      const BARGE_LEVEL = 0.02;
       /* Two frames is an onset: enough to tell speech from a click and short
        * enough to stop the voice while the first word is still being said. The
        * board's AFE uses a 128 ms onset delay for the same reason. */
-      const BARGE_FRAMES = 3;
+      const BARGE_FRAMES = 2;
       /* Playback needs a moment to settle before it can be talked over. */
       const BARGE_GUARD_MS = 400;
       /* Both maxima are reported: an open gate shows what the microphone
@@ -2130,7 +2130,7 @@ registerProcessor('aura-capture', AuraCapture);`;
 
               const threshold = Math.max(BARGE_LEVEL, (state.floor || 0) * 6, (state.echo || 0) * 2);
               const follows = correlation(state.micHist, state.playHist);
-              const echoLike = follows > 0.55;
+              const echoLike = follows > 0.8;
               const needed = echoLike ? threshold * 2 : threshold;
               state.streak = settled && level > needed ? state.streak + 1 : 0;
 
