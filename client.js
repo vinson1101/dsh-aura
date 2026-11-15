@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.29.0';
+const AURA_VERSION = '0.29.1';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1412,7 +1412,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         levelRef.current = 0;
         setTalking(false);
         gateRef.current.active = false;
-        gateRef.current.until = Date.now() + 300;
+        gateRef.current.until = Date.now() + 150;
         if (!playback) return;
         for (const source of playback.sources || []) {
           try {
@@ -2141,7 +2141,10 @@ registerProcessor('aura-capture', AuraCapture);`;
               }
               return;
             }
-            bargeRef.current.frames.length = 0;
+            /* The gate reopened: whatever the tail swallowed is the start of
+             * the next sentence. Hand it over before the live frame. */
+            const tail = bargeRef.current.frames.splice(0);
+            for (const frame of tail.slice(-3)) vad.push(frame);
             bargeRef.current.streak = 0;
             bargeRef.current.all = Math.max(bargeRef.current.all || 0, levelOfFrame(event.data));
             vad.push(event.data);
