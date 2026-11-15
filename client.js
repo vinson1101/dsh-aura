@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.28.9';
+const AURA_VERSION = '0.29.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -2046,7 +2046,24 @@ registerProcessor('aura-capture', AuraCapture);`;
             }
           });
 
+          /* The socket needs a round trip before it accepts audio, and the user
+           * may already be speaking: hold the first frames instead of dropping
+           * them, and flush the moment the turn starts. */
+          let handshakeFrames = [];
+          const flushHandshake = () => {
+            if (handshakeFrames.length === 0) return;
+            const held = handshakeFrames;
+            handshakeFrames = [];
+            for (const frame of held) vad.push(frame);
+          };
+
           node.port.onmessage = (event) => {
+            if (!turn.started) {
+              handshakeFrames.push(event.data);
+              if (handshakeFrames.length > 12) handshakeFrames.shift();
+              return;
+            }
+            flushHandshake();
             if (gated()) {
               /* Keep the last second of audio so an interruption is
                * transcribed from its beginning, not from its middle. */
