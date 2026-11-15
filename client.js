@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.31.1';
+const AURA_VERSION = '0.31.2';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -478,6 +478,8 @@ window.__ModuleLoader__.load({
     /** Otherwise a real pause still wins, just later. */
     const LONG_QUIET_CHUNKS = 20;
     const NO_SPEECH_CHUNKS = 40;
+    /** How long a loud sound must last before it counts as somebody speaking. */
+    const ONSET_CHUNKS = 3;
     /** Streaming grows nothing per chunk, so a long dictation is allowed. */
     const MAX_CHUNKS = 600;
     const THRESHOLD_FLOOR = 450;
@@ -490,6 +492,8 @@ window.__ModuleLoader__.load({
       let carry = new Float32Array(0);
       let chunks = 0;
       let speech = false;
+      /** Consecutive chunks above the threshold, before speech is declared. */
+      let voiced = 0;
       let quiet = 0;
       let floor = null;
       let peak = 0;
@@ -527,9 +531,12 @@ window.__ModuleLoader__.load({
         if (floor === null) floor = Math.min(level, NOISE_CEILING);
         const threshold = Math.max(THRESHOLD_FLOOR, floor * THRESHOLD_FACTOR);
         if (level >= threshold) {
-          speech = true;
+          voiced += 1;
+          /* A knock is loud for one chunk; a word is loud for several. */
+          if (voiced >= ONSET_CHUNKS) speech = true;
           quiet = 0;
         } else {
+          voiced = 0;
           quiet += 1;
           floor = FLOOR_DECAY * floor + (1 - FLOOR_DECAY) * Math.min(level, NOISE_CEILING);
         }
