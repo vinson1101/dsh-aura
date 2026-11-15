@@ -14,12 +14,25 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.32.5';
+const AURA_VERSION = '0.32.7';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
   factory(require) {
     diag('factory');
+    /* A reload replaces this module but not the running audio graph: stop the
+     * capture the previous instance left holding the microphone. */
+    try {
+      const stale = window.__auraCapture;
+      if (stale) {
+        diag('mic_stale', { id: stale.id || 0 });
+        if (stale.stream) for (const track of stale.stream.getTracks()) track.stop();
+        if (stale.audio && typeof stale.audio.close === 'function') stale.audio.close();
+      }
+    } catch {
+      /* nothing to clean up */
+    }
+    window.__auraCapture = null;
     const React = require('react');
     const h = React.createElement;
 
@@ -1914,6 +1927,13 @@ registerProcessor('aura-capture', AuraCapture);`;
         captureRef.current = null;
         liveCapture.current = null;
         liveCapture.opening = false;
+        try {
+          if (window.__auraCapture && (!capture || window.__auraCapture.id === capture.id)) {
+            window.__auraCapture = null;
+          }
+        } catch {
+          /* private mode */
+        }
         setListening(false);
         if (!capture) {
           diag('mic_stop_empty');
@@ -2060,7 +2080,12 @@ registerProcessor('aura-capture', AuraCapture);`;
           /* Measured: with echoCancellation on, the microphone reports exactly
            * 0.001 for the whole of a playback — it is being ducked, not quiet.
            * The constraint is a preference so the two can be compared. */
-          const useAec = prefsRef.current.aec === true;
+          /* Two mistakes in one experiment: the level of 0.001 that looked like
+           * echo cancellation was several dead captures competing for the
+           * device (fixed by the stale-capture cleanup), and turning AEC off
+           * made the listener voice barely louder than its own echo — 0.09
+           * against a 0.10 threshold. Back on, and on by default. */
+          const useAec = prefsRef.current.aec !== false;
           const stream = await media.getUserMedia({
             audio: {
               channelCount: 1,
@@ -2248,6 +2273,11 @@ registerProcessor('aura-capture', AuraCapture);`;
           const id = liveCapture.seq;
           const record = { id, stream, audio, source, node, sink, vad, socket };
           liveCapture.current = record;
+          try {
+            window.__auraCapture = record;
+          } catch {
+            /* private mode */
+          }
           liveCapture.opening = false;
           captureRef.current = record;
           openingRef.current = false;
