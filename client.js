@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.26.2';
+const AURA_VERSION = '0.26.3';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -168,6 +168,42 @@ window.__ModuleLoader__.load({
     };
     /* How tight the cloud holds itself: listening pulls in, talking opens up. */
     const TIGHT = { listening: 0.9, talking: 1.04, error: 0.96, running: 1.02 };
+
+    /**
+     * Turn written text into something worth hearing.
+     *
+     * A reply is written for the eye: it carries code fences, inline code, paths,
+     * table pipes and emphasis marks. Read aloud those become English identifiers
+     * in the middle of a Chinese sentence. Prose is kept, markup is dropped, and a
+     * segment that is mostly code is not spoken at all.
+     */
+    function speechText(text) {
+      let prose = String(text || '');
+      prose = prose.replace(/```[\s\S]*?```/g, ' ');
+      prose = prose.replace(/`[^`]*`/g, ' ');
+      prose = prose.replace(/https?:\/\/\S+/g, ' ');
+      prose = prose.replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, ' ');
+      /* A table row read aloud is noise: drop the whole line. */
+      prose = prose.replace(/^[ \t]*\|.*\|[ \t]*$/gm, ' ');
+      /* Table rows, headings, list bullets and block quotes. */
+      prose = prose.replace(/^[ \t]*[|>#]+[ \t]*/gm, '');
+      prose = prose.replace(/^[ \t]*[-*+][ \t]+/gm, '');
+      prose = prose.replace(/^[ \t]*\d+[.)][ \t]+/gm, '');
+      prose = prose.replace(/[*_~]{1,3}/g, '');
+      prose = prose.replace(/[ \t]+/g, ' ');
+      prose = prose.replace(/\n{2,}/g, '。');
+      prose = prose.replace(/\n/g, '，');
+      prose = prose.trim();
+      if (!prose) return '';
+      const han = (prose.match(/[\u4e00-\u9fff]/g) || []).length;
+      const latin = (prose.match(/[A-Za-z]/g) || []).length;
+      /* Mostly letters and punctuation, almost no Chinese: an identifier list, a
+       * path, a version line. Speaking it is worse than silence. */
+      if (han < 2 && latin > 6) return '';
+      /* Digits, punctuation and spaces only: a version, a count, a separator. */
+      if (han === 0 && latin === 0) return '';
+      return prose;
+    }
 
     /**
      * A form gets the canvas and the frame it sits in. The form owns its own
@@ -1405,8 +1441,11 @@ registerProcessor('aura-capture', AuraCapture);`;
 
       const speakNow = React.useCallback(
         async (text, voice, generation) => {
-          const spoken = String(text || '').trim();
-          if (!spoken) return;
+          const spoken = speechText(text);
+          if (!spoken) {
+            diag('speak_skipped', { chars: String(text || '').length });
+            return;
+          }
           if (generation !== speakGeneration.current) return;
           if (mutedRef.current) {
             diag('speak_muted', { chars: spoken.length });
