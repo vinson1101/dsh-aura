@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.28.7';
+const AURA_VERSION = '0.28.8';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -2112,7 +2112,11 @@ registerProcessor('aura-capture', AuraCapture);`;
                 gateRef.current.until = 0;
                 gaggedRef.current = runSeqRef.current;
                 stopSpeaking();
-                for (const frame of recent.splice(0)) vad.push(frame);
+                /* The buffered frames are the speaker leaking back, not the
+                 * person: feeding them to the recognizer is what made later
+                 * transcripts contain the assistant voice. Discard them and
+                 * accept that the first syllable may be cut. */
+                recent.length = 0;
               }
               return;
             }
