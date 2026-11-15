@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.25.4';
+const AURA_VERSION = '0.25.5';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1308,7 +1308,17 @@ registerProcessor('aura-capture', AuraCapture);`;
       /* Barge-in needs the frames the gate is dropping, so they are measured
        * here: a voice over the speaker for ~300 ms means "stop talking". */
       const BARGE_LEVEL = 0.02;
-      const bargeRef = React.useRef({ streak: 0, frames: [], floor: null, probe: 0, probeAt: 0 });
+      /* Both maxima are reported: an open gate shows what the microphone
+       * actually hears, a closed one shows what echo cancellation leaves. */
+      const bargeRef = React.useRef({
+        streak: 0,
+        frames: [],
+        floor: null,
+        probe: 0,
+        probeAt: 0,
+        all: 0,
+        gatedMax: 0,
+      });
       const levelRef = React.useRef(0);
       /* Survives a reload: shipping a new bundle reloads the page mid-run, and
        * the reply of that run must still be spoken by the new instance. */
@@ -1916,15 +1926,21 @@ registerProcessor('aura-capture', AuraCapture);`;
               if (recent.length > 10) recent.shift();
               const state = bargeRef.current;
               const level = levelOfFrame(event.data);
+              state.all = Math.max(state.all, level);
               /* The threshold follows the room: an air conditioner or a fan is
                * not an interruption, a voice over it is. */
               state.floor = state.floor === null ? level : state.floor * 0.92 + level * 0.08;
               const threshold = Math.max(BARGE_LEVEL, state.floor * 3);
               state.streak = level > threshold ? state.streak + 1 : 0;
               if (level > state.probe) state.probe = level;
-              if (Date.now() - state.probeAt > 1500) {
-                diag('barge_probe', { max: Number(state.probe.toFixed(3)), floor: Number(state.floor.toFixed(3)), threshold: Number(threshold.toFixed(3)) });
-                state.probe = 0;
+              state.gatedMax = Math.max(state.gatedMax || 0, level);
+              if (Date.now() - state.probeAt > 3000) {
+                diag('mic_level', {
+                  gated: Number((state.gatedMax || 0).toFixed(3)),
+                  floor: Number(state.floor.toFixed(3)),
+                  threshold: Number(threshold.toFixed(3)),
+                });
+                state.gatedMax = 0;
                 state.probeAt = Date.now();
               }
               if (bargeRef.current.streak >= 3) {
@@ -1939,6 +1955,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             }
             bargeRef.current.frames.length = 0;
             bargeRef.current.streak = 0;
+            bargeRef.current.all = Math.max(bargeRef.current.all || 0, levelOfFrame(event.data));
             vad.push(event.data);
           };
           captureRef.current = { stream, audio, source, node, sink, vad, socket };
