@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.28.2';
+const AURA_VERSION = '0.28.3';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1382,6 +1382,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         }
       };
       const speakNext = React.useRef(readArmed());
+      const speakArmedRef = speakNext;
       /* The window still shows the previous reply for a moment after a run
        * ends, so the text from before this turn is captured and the new one is
        * whatever differs from it. */
@@ -1703,6 +1704,11 @@ registerProcessor('aura-capture', AuraCapture);`;
           runSeqRef.current += 1;
           gaggedRef.current = -1;
         }
+        if (!running && gaggedRef.current !== -1 && !speakArmedRef.current) {
+          /* The turn that was silenced has ended and nothing is armed: the
+           * conversation continues normally from here. */
+          gaggedRef.current = -1;
+        }
         runningRef.current = running;
         if (wasRunning.current && !running) {
           setSettledAt(Date.now() + SETTLED_MS);
@@ -1781,6 +1787,9 @@ registerProcessor('aura-capture', AuraCapture);`;
               return false;
             }
             replyBefore.current = lastAssistantText(props.sessionId);
+            /* A new message is a request to be heard again; only the run that
+             * was interrupted stays silent. */
+            gaggedRef.current = -1;
             armSpeak(true);
             diag('speak_armed', { chars: trimmed.length, before: replyBefore.current.length });
             return true;
@@ -2050,7 +2059,13 @@ registerProcessor('aura-capture', AuraCapture);`;
               state.all = Math.max(state.all, level);
               /* The threshold follows the room: an air conditioner or a fan is
                * not an interruption, a voice over it is. */
-              state.floor = state.floor === null ? level : state.floor * 0.92 + level * 0.08;
+              /* A noise floor tracks the room, not the person: learning from
+               * speech is what once pushed the threshold to 0.45 and made
+               * interrupting impossible. Quiet follows down quickly; anything
+               * above the current floor is ignored. */
+              if (state.floor === null) state.floor = level;
+              else if (level < state.floor) state.floor = state.floor * 0.7 + level * 0.3;
+              else state.floor = state.floor * 0.995 + level * 0.005;
               /* Room tone, its own speaker, and an absolute floor: the noisiest
                * of the three decides what counts as a voice. */
               const threshold = Math.max(BARGE_LEVEL, state.floor * 4, (state.echo || 0) * 1.6);
