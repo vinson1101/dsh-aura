@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.26.3';
+const AURA_VERSION = '0.27.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1434,7 +1434,11 @@ registerProcessor('aura-capture', AuraCapture);`;
        * or by hanging up. Streaming keeps producing sentences, and without this
        * every one of them restarts the voice a second later, which is what
        * "I cannot interrupt it" actually was. */
-      const mutedRef = React.useRef(false);
+      /* Silence belongs to a run, not to the conversation: the turn that was
+       * interrupted stops speaking, and the next turn speaks normally. */
+      const runSeqRef = React.useRef(0);
+      const gaggedRef = React.useRef(-1);
+      const speechGagged = () => gaggedRef.current === runSeqRef.current;
       /* turns.py: cancelling a turn has to reach the work in flight, not just
        * the player. This aborts the synth request that is still streaming. */
       const speechAbort = React.useRef(null);
@@ -1447,8 +1451,8 @@ registerProcessor('aura-capture', AuraCapture);`;
             return;
           }
           if (generation !== speakGeneration.current) return;
-          if (mutedRef.current) {
-            diag('speak_muted', { chars: spoken.length });
+          if (speechGagged()) {
+            diag('speak_gagged', { chars: spoken.length, run: runSeqRef.current });
             return;
           }
           try {
@@ -1549,7 +1553,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             let carry = new Uint8Array(0);
             let chunks = 0;
             for (;;) {
-              if (mutedRef.current || generation !== speakGeneration.current) {
+              if (speechGagged() || generation !== speakGeneration.current) {
                 try {
                   await reader.cancel();
                 } catch {
@@ -1686,10 +1690,22 @@ registerProcessor('aura-capture', AuraCapture);`;
       /* The version probe lives at module scope now: see watchForNewVersion. */
       React.useEffect(() => {
         diag('run_watch', { running, was: wasRunning.current, wants: speakNext.current });
+        if (running && !wasRunning.current) {
+          runSeqRef.current += 1;
+          gaggedRef.current = -1;
+        }
         runningRef.current = running;
         if (wasRunning.current && !running) {
           setSettledAt(Date.now() + SETTLED_MS);
           /* A run we started ends here: read its reply and speak it. */
+          if (speechGagged() && speakNext.current) {
+            armSpeak(false);
+            speechBuffer.current = '';
+            spokeAny.current = false;
+            diag('reply_silenced', { run: runSeqRef.current });
+            wasRunning.current = running;
+            return;
+          }
           if (speakNext.current) {
             armSpeak(false);
             /* Whatever the stream left unfinished is the last sentence. */
@@ -1744,6 +1760,10 @@ registerProcessor('aura-capture', AuraCapture);`;
           try {
             /* While a turn is running, a voice input is an interruption, not a
              * message to read after it. */
+            /* Interrupting replaces the conversation at once: the new words
+             * are the new input, not something queued behind the old turn.
+             * Keeping a background task alive across that is the host's
+             * business, not this pane's. */
             const mode = runningRef.current ? 'steer' : 'queue';
             diag('submit_mode', { mode });
             const result = await session.prompt([{ type: 'text', text: trimmed }], mode);
@@ -1752,7 +1772,6 @@ registerProcessor('aura-capture', AuraCapture);`;
               return false;
             }
             replyBefore.current = lastAssistantText(props.sessionId);
-            mutedRef.current = false;
             armSpeak(true);
             diag('speak_armed', { chars: trimmed.length, before: replyBefore.current.length });
             return true;
@@ -2034,7 +2053,7 @@ registerProcessor('aura-capture', AuraCapture);`;
                 bargeRef.current.streak = 0;
                 gateRef.current.active = false;
                 gateRef.current.until = 0;
-                mutedRef.current = true;
+                gaggedRef.current = runSeqRef.current;
                 stopSpeaking();
                 for (const frame of recent.splice(0)) vad.push(frame);
               }
@@ -2075,7 +2094,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         if (callActive) {
           choose({ mode: 'talk' });
           if (captureRef.current) stopCapture();
-          mutedRef.current = true;
+          gaggedRef.current = runSeqRef.current;
           stopSpeaking();
         } else {
           choose({ mode: 'chat' });
@@ -2344,12 +2363,13 @@ registerProcessor('aura-capture', AuraCapture);`;
                     type: 'button',
                     className: 'aura-icon-btn',
                     style: BUTTON,
-                    title: 'Stop',
-                    'aria-label': 'Stop',
+                    title: '静音',
+                    'aria-label': 'Silence',
                     onClick: () => {
-                      mutedRef.current = true;
+                      /* Stop the voice. Whether the work is cancelled is a
+                       * separate decision, so it is not made here. */
+                      gaggedRef.current = runSeqRef.current;
                       stopSpeaking();
-                      if (runningRef.current) void stop();
                     },
                   },
                   h(HaltIcon, null),

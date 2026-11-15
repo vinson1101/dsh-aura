@@ -453,7 +453,7 @@ assert.equal(ttsBodies.length, 1, 'a settled run is spoken once');
 
   /* The user interrupts: the stop control stands in for the barge-in path,
    * which needs a microphone. */
-  const stopButton = container.querySelector('button[aria-label="Stop"]');
+  const stopButton = container.querySelector('button[aria-label="Silence"]');
   assert.ok(stopButton, 'the stop control exists while speaking');
   stopButton.click();
   await new Promise((resolve) => setTimeout(resolve, 60));
