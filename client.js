@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.31.0';
+const AURA_VERSION = '0.31.1';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1377,11 +1377,11 @@ registerProcessor('aura-capture', AuraCapture);`;
        * control ducks the microphone and the same voice measures 0.03 instead
        * of 0.3. The ratio to the room and to the echo is what holds, so the
        * absolute value is only a sanity bound. */
-      const BARGE_LEVEL = 0.015;
+      const BARGE_LEVEL = 0.03;
       /* Two frames is an onset: enough to tell speech from a click and short
        * enough to stop the voice while the first word is still being said. The
        * board's AFE uses a 128 ms onset delay for the same reason. */
-      const BARGE_FRAMES = 2;
+      const BARGE_FRAMES = 3;
       /* Playback needs a moment to settle before it can be talked over. */
       const BARGE_GUARD_MS = 400;
       /* Both maxima are reported: an open gate shows what the microphone
@@ -2106,68 +2106,60 @@ registerProcessor('aura-capture', AuraCapture);`;
             const playing = gated();
             const settled = Date.now() - (state.startedAt || 0) > BARGE_GUARD_MS;
 
-            /* Echo is measured only while the player is producing sound; the
-             * room floor only while it is not. */
             if (playing) {
+              /* Echo is only meaningful while the player is making sound. */
               state.echo = state.echo === null || state.echo === undefined
                 ? level
                 : state.echo * 0.9 + level * 0.1;
-            } else if (state.floor === null) {
-              state.floor = level;
-            } else if (level < state.floor) {
-              state.floor = state.floor * 0.7 + level * 0.3;
-            } else {
-              state.floor = state.floor * 0.995 + level * 0.005;
+              state.micHist.push(level);
+              state.playHist.push(levelRef.current || 0);
+              if (state.micHist.length > 10) state.micHist.shift();
+              if (state.playHist.length > 10) state.playHist.shift();
+
+              const threshold = Math.max(BARGE_LEVEL, (state.floor || 0) * 6, (state.echo || 0) * 2);
+              const follows = correlation(state.micHist, state.playHist);
+              const echoLike = follows > 0.55;
+              const needed = echoLike ? threshold * 2 : threshold;
+              state.streak = settled && level > needed ? state.streak + 1 : 0;
+
+              if (Date.now() - state.probeAt > 3000) {
+                diag('mic_level', {
+                  level: Number(level.toFixed(3)),
+                  echo: Number((state.echo || 0).toFixed(3)),
+                  corr: Number(follows.toFixed(2)),
+                  threshold: Number(needed.toFixed(3)),
+                });
+                state.probeAt = Date.now();
+              }
+
+              const cooled =
+                state.lastBargeAt === undefined || Date.now() - state.lastBargeAt > 1200;
+              if (state.streak >= BARGE_FRAMES && cooled) {
+                state.lastBargeAt = Date.now();
+                state.streak = 0;
+                diag('barge_in', {
+                  level: Number(level.toFixed(3)),
+                  echo: Number((state.echo || 0).toFixed(3)),
+                  corr: Number(follows.toFixed(2)),
+                  needed: Number(needed.toFixed(3)),
+                });
+                gateRef.current.active = false;
+                gateRef.current.until = 0;
+                gaggedRef.current = runSeqRef.current;
+                stopSpeaking();
+                /* Nothing is replayed: the reference is explicit that a
+                 * retrospective cache repeats onset samples. The first syllable
+                 * of an interruption may be lost; a duplicated one is worse. */
+              }
+              state.gatedMax = Math.max(state.gatedMax || 0, level);
+              return;
             }
 
-            state.gatedMax = Math.max(state.gatedMax || 0, level);
-            state.all = Math.max(state.all || 0, level);
-            state.micHist.push(level);
-            state.playHist.push(levelRef.current || 0);
-            if (state.micHist.length > 10) state.micHist.shift();
-            if (state.playHist.length > 10) state.playHist.shift();
-
-            /* Continuous uplink. The board forwards every AFE frame and lets
-             * AEC remove its own voice; here echoCancellation is asked to do
-             * the same job, so the recognizer is never deaf. */
+            if (state.floor === null) state.floor = level;
+            else if (level < state.floor) state.floor = state.floor * 0.7 + level * 0.3;
+            else state.floor = state.floor * 0.995 + level * 0.005;
+            state.streak = 0;
             vad.push(event.data);
-
-            if (!playing) return;
-
-            const threshold = Math.max(BARGE_LEVEL, (state.floor || 0) * 4, (state.echo || 0) * 2);
-            const follows = correlation(state.micHist, state.playHist);
-            const echoLike = follows > 0.55;
-            const needed = echoLike ? threshold * 2 : threshold;
-            state.streak = settled && level > needed ? state.streak + 1 : 0;
-
-            if (Date.now() - state.probeAt > 3000) {
-              diag('mic_level', {
-                level: Number(level.toFixed(3)),
-                echo: Number((state.echo || 0).toFixed(3)),
-                floor: Number((state.floor || 0).toFixed(3)),
-                corr: Number(follows.toFixed(2)),
-                threshold: Number(needed.toFixed(3)),
-                playing,
-              });
-              state.probeAt = Date.now();
-            }
-
-            const cooled =
-              state.lastBargeAt === undefined || Date.now() - state.lastBargeAt > 1200;
-            if (state.streak >= BARGE_FRAMES && cooled) {
-              state.lastBargeAt = Date.now();
-              state.streak = 0;
-              diag('barge_in', {
-                level: Number(level.toFixed(3)),
-                echo: Number((state.echo || 0).toFixed(3)),
-                corr: Number(follows.toFixed(2)),
-                needed: Number(needed.toFixed(3)),
-              });
-              gateRef.current.active = false;
-              gateRef.current.until = 0;
-              gaggedRef.current = runSeqRef.current;
-              stopSpeaking();
-            }
           };
           captureRef.current = { stream, audio, source, node, sink, vad, socket };
           setListening(true);
