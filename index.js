@@ -248,6 +248,28 @@ export async function liveTurn(peer, asrConfig, readKey, fallback) {
   });
 }
 
+/**
+ * Whether a long task survives an interruption is decided by where it runs: a
+ * foreground command is cancelled with its turn, a registered background job
+ * keeps running and reports when it settles. Making that habit explicit is what
+ * lets the pane interrupt the voice without losing the work.
+ */
+const BACKGROUND_TASK_PROMPT = [
+  '## 后台任务与语音会话',
+  '',
+  '这个会话可能通过语音进行，用户会随时插话。插话只取消当前这一轮对话，不应该取消已经启动的工作。',
+  '请按下面的习惯工作：',
+  '',
+  '1. 预计超过约 15 秒的工作（查资料、安装依赖、跑测试、批量文件处理、长命令），用 bash 的',
+  '   run_in_background 启动，不要在当前这一轮里同步等待。',
+  '2. 启动后立刻用一两句话说明「在后台跑着，好了告诉你」，然后结束这一轮，把麦克风让给用户。',
+  '3. 收到后台任务完成的通知时，用 job_output 读取结果（必要时 job_list），再用一两句话汇报结论；',
+  '   不要朗读原始日志、代码块、路径或版本号。',
+  '4. 用户插话时不要 job_kill。只有用户明确说「停 / 取消 / 别做了」才调用 job_kill。',
+  '5. 一两秒内能结束的短操作直接用前台命令，不要为了让形式好看而绕到后台。',
+  '6. 语音回答要短：先给结论，再给一句理由。细节放最后，一句话能说清就不要说三句。',
+].join('\n');
+
 export function apply(ctx, config = {}) {
   const asrConfig = config.asr || {};
   const readKey = createKeyReader({
@@ -259,6 +281,17 @@ export function apply(ctx, config = {}) {
     readSecretsFile: () => readFile(path.join(dshHome(), 'aura-secrets.env'), 'utf8'),
   });
   const asr = createAsr(asrConfig, readKey);
+
+  /* Guidance belongs in the prompt registry, not in a preset: it must survive
+   * preset changes and apply to every session in this profile. */
+  const prompts = typeof ctx.get === 'function' ? ctx.get('systemPrompt') : null;
+  if (prompts && typeof prompts.section === 'function') {
+    try {
+      prompts.section({ name: 'aura-background-tasks', order: 420, text: BACKGROUND_TASK_PROMPT });
+    } catch (failure) {
+      console.error('dsh-aura: prompt section failed', failure);
+    }
+  }
   /* A different model on purpose: the realtime stream and the one-shot request
    * draw on separate quotas, so one dying does not take the turn with it. */
   const fallbackAsr = createAsr(
