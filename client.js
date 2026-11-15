@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.25.2';
+const AURA_VERSION = '0.25.3';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -403,7 +403,7 @@ window.__ModuleLoader__.load({
     const FLOOR_DECAY = 0.8;
     const NOISE_CEILING = 850;
 
-    function createVad({ onChunk, onEnd, isComplete }) {
+    function createVad({ onChunk, onEnd, isComplete, noSpeechChunks = NO_SPEECH_CHUNKS }) {
       let carry = new Float32Array(0);
       let chunks = 0;
       let speech = false;
@@ -468,7 +468,7 @@ window.__ModuleLoader__.load({
             return;
           }
         }
-        if (!speech && chunks >= NO_SPEECH_CHUNKS) {
+        if (!speech && chunks >= noSpeechChunks) {
           end('no_speech');
           return;
         }
@@ -1836,6 +1836,9 @@ registerProcessor('aura-capture', AuraCapture);`;
           sink.connect(audio.destination);
 
           const vad = createVad({
+            /* On a call the microphone stays open until spoken to; the 4 s
+             * "nobody said anything" rule belongs to turn-taking. */
+            noSpeechChunks: prefsRef.current.mode === 'chat' ? 600 : NO_SPEECH_CHUNKS,
             onChunk(pcm, level, peak) {
               if (!turn.started) return;
               try {
