@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.29.1';
+const AURA_VERSION = '0.29.2';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1343,9 +1343,11 @@ registerProcessor('aura-capture', AuraCapture);`;
       };
       /* Barge-in needs the frames the gate is dropping, so they are measured
        * here: a voice over the speaker for ~300 ms means "stop talking". */
-      /* Measured on this machine: the speaker leaking back sits around 0.05,
-       * real speech around 0.16-0.4. The threshold belongs between them. */
-      const BARGE_LEVEL = 0.09;
+      /* Absolute levels are not stable: with the speaker loud, automatic gain
+       * control ducks the microphone and the same voice measures 0.03 instead
+       * of 0.3. The ratio to the room and to the echo is what holds, so the
+       * absolute value is only a sanity bound. */
+      const BARGE_LEVEL = 0.015;
       /* Six frames — about 600 ms — is a word, not a click or a cupboard. */
       const BARGE_FRAMES = 6;
       /* Playback needs a moment to settle before it can be talked over. */
@@ -2094,7 +2096,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               else state.floor = state.floor * 0.995 + level * 0.005;
               /* Room tone, its own speaker, and an absolute floor: the noisiest
                * of the three decides what counts as a voice. */
-              const threshold = Math.max(BARGE_LEVEL, state.floor * 4, (state.echo || 0) * 1.5);
+              const threshold = Math.max(BARGE_LEVEL, state.floor * 4, (state.echo || 0) * 2);
               /* Nothing below the loudest leak plus a margin can be a voice. */
               const settled = Date.now() - (state.startedAt || 0) > BARGE_GUARD_MS;
               state.streak = settled && level > threshold ? state.streak + 1 : 0;
@@ -2105,6 +2107,7 @@ registerProcessor('aura-capture', AuraCapture);`;
                   gated: Number((state.gatedMax || 0).toFixed(3)),
                   floor: Number(state.floor.toFixed(3)),
                   echo: Number((state.echo || 0).toFixed(3)),
+                  ratio: Number((state.probe / Math.max(0.001, state.echo || 0)).toFixed(1)),
                   threshold: Number(threshold.toFixed(3)),
                   guard: Date.now() - (state.startedAt || 0) < BARGE_GUARD_MS,
                 });
