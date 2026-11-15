@@ -386,6 +386,31 @@ assert.equal(ttsBodies.length, 1, 'a settled run is spoken once');
   assert.equal(prompts.at(-1).mode, 'queue', 'a message sent while idle queues');
 }
 
+/* ---- a finished sentence does not silence the next one ----------------- */
+
+{
+  /* The stub's sources never end on their own, so ending them is done by hand
+   * between sentences — which is exactly the moment that used to cancel the
+   * sentence that followed. */
+  /* The live subscription only exists while a run is in flight. */
+  running = true;
+  render();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  eventSource.pushLive('甲句。');
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const spoken = ttsBodies.length;
+  for (const source of createdSources) if (typeof source.onended === 'function') source.onended();
+  eventSource.pushLive('乙句。');
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.ok(ttsBodies.length > spoken, 'a sentence after a natural end is still spoken');
+  assert.ok(
+    !beacons.some((beacon) => beacon.stage === 'tts_cancelled'),
+    'and it is not cancelled as stale',
+  );
+  running = false;
+  render();
+}
+
 /* ---- a finished utterance reports its end ----------------------------- */
 
 {

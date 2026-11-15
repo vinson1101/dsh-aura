@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.26.1';
+const AURA_VERSION = '0.26.2';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1348,14 +1348,20 @@ registerProcessor('aura-capture', AuraCapture);`;
       /** Stop playback and let the sphere settle. */
       const stopSpeaking = React.useCallback((options = {}) => {
         const cancel = options.abort !== false;
-        speakGeneration.current += 1;
-        const abort = speechAbort.current;
-        speechAbort.current = null;
-        if (abort && cancel) {
-          try {
-            abort.abort();
-          } catch {
-            /* already settled */
+        /* Only a real cancellation invalidates the request in flight. Bumping
+         * the generation on a natural end made the *next* sentence decide it
+         * was stale and cancel itself, which is why the voice kept dying one
+         * sentence in. */
+        if (cancel) {
+          speakGeneration.current += 1;
+          const abort = speechAbort.current;
+          speechAbort.current = null;
+          if (abort) {
+            try {
+              abort.abort();
+            } catch {
+              /* already settled */
+            }
           }
         }
         const playback = voiceRef.current;
