@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.28.4';
+const AURA_VERSION = '0.28.5';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1780,6 +1780,11 @@ registerProcessor('aura-capture', AuraCapture);`;
              * are the new input, not something queued behind the old turn.
              * Keeping a background task alive across that is the host's
              * business, not this pane's. */
+            /* Speaking always stops the voice. Waiting for a barge-in
+             * decision here is what let the old answer keep playing under the
+             * new turn. */
+            if (runningRef.current) gaggedRef.current = runSeqRef.current;
+            stopSpeaking();
             const mode = runningRef.current ? 'steer' : 'queue';
             diag('submit_mode', { mode });
             const result = await session.prompt([{ type: 'text', text: trimmed }], mode);
