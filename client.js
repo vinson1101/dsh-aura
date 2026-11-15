@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.29.3';
+const AURA_VERSION = '0.30.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -240,6 +240,36 @@ window.__ModuleLoader__.load({
         sum += value * value;
       }
       return Math.sqrt(sum / samples.length);
+    }
+
+    /**
+     * Pearson correlation of two equal-length series, or 0 when either is flat.
+     * Used to ask whether the microphone is hearing the speaker (the envelopes
+     * move together) or a person (they do not).
+     */
+    function correlation(xs, ys) {
+      const count = Math.min(xs.length, ys.length);
+      if (count < 4) return 0;
+      let mx = 0;
+      let my = 0;
+      for (let index = 0; index < count; index += 1) {
+        mx += xs[index];
+        my += ys[index];
+      }
+      mx /= count;
+      my /= count;
+      let num = 0;
+      let dx = 0;
+      let dy = 0;
+      for (let index = 0; index < count; index += 1) {
+        const a = xs[index] - mx;
+        const b = ys[index] - my;
+        num += a * b;
+        dx += a * a;
+        dy += b * b;
+      }
+      if (dx < 1e-9 || dy < 1e-9) return 0;
+      return num / Math.sqrt(dx * dy);
     }
 
     function mountOrb(canvas, readState) {
@@ -1362,6 +1392,8 @@ registerProcessor('aura-capture', AuraCapture);`;
         probeAt: 0,
         all: 0,
         gatedMax: 0,
+        micHist: [],
+        playHist: [],
       });
       const levelRef = React.useRef(0);
       /* Survives a reload: shipping a new bundle reloads the page mid-run, and
@@ -2099,15 +2131,26 @@ registerProcessor('aura-capture', AuraCapture);`;
               const threshold = Math.max(BARGE_LEVEL, state.floor * 4, (state.echo || 0) * 2);
               /* Nothing below the loudest leak plus a margin can be a voice. */
               const settled = Date.now() - (state.startedAt || 0) > BARGE_GUARD_MS;
-              state.streak = settled && level > threshold ? state.streak + 1 : 0;
+              /* Echo follows the player; a voice does not. Above 0.55 the
+               * microphone is plausibly hearing the speaker, and the level has
+               * to be twice as convincing before it counts as a person. */
+              const follows = correlation(state.micHist, state.playHist);
+              const echoLike = follows > 0.55;
+              const needed = echoLike ? threshold * 2 : threshold;
+              state.streak = settled && level > needed ? state.streak + 1 : 0;
               if (level > state.probe) state.probe = level;
               state.gatedMax = Math.max(state.gatedMax || 0, level);
+              state.micHist.push(level);
+              state.playHist.push(levelRef.current || 0);
+              if (state.micHist.length > 10) state.micHist.shift();
+              if (state.playHist.length > 10) state.playHist.shift();
               if (Date.now() - state.probeAt > 3000) {
                 diag('mic_level', {
                   gated: Number((state.gatedMax || 0).toFixed(3)),
                   floor: Number(state.floor.toFixed(3)),
                   echo: Number((state.echo || 0).toFixed(3)),
                   ratio: Number((state.probe / Math.max(0.001, state.echo || 0)).toFixed(1)),
+                  corr: Number(correlation(state.micHist, state.playHist).toFixed(2)),
                   threshold: Number(threshold.toFixed(3)),
                   guard: Date.now() - (state.startedAt || 0) < BARGE_GUARD_MS,
                 });
