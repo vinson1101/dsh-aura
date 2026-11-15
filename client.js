@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.27.0';
+const AURA_VERSION = '0.28.1';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1343,7 +1343,13 @@ registerProcessor('aura-capture', AuraCapture);`;
       };
       /* Barge-in needs the frames the gate is dropping, so they are measured
        * here: a voice over the speaker for ~300 ms means "stop talking". */
-      const BARGE_LEVEL = 0.02;
+      /* A floor, not a whisper: below this the microphone hears the room, a
+       * fan, or its own speaker. */
+      const BARGE_LEVEL = 0.035;
+      /* Five frames — about half a second — is a word, not a click. */
+      const BARGE_FRAMES = 5;
+      /* Playback needs a moment to settle before it can be talked over. */
+      const BARGE_GUARD_MS = 400;
       /* Both maxima are reported: an open gate shows what the microphone
        * actually hears, a closed one shows what echo cancellation leaves. */
       const bargeRef = React.useRef({
@@ -1542,6 +1548,8 @@ registerProcessor('aura-capture', AuraCapture);`;
             };
 
             voiceRef.current = playback;
+            bargeRef.current.startedAt = Date.now();
+            bargeRef.current.streak = 0;
             playback.pending += 1;
             window.clearTimeout(playback.finishTimer);
             gateRef.current.active = true;
@@ -2035,8 +2043,9 @@ registerProcessor('aura-capture', AuraCapture);`;
               /* The threshold follows the room: an air conditioner or a fan is
                * not an interruption, a voice over it is. */
               state.floor = state.floor === null ? level : state.floor * 0.92 + level * 0.08;
-              const threshold = Math.max(BARGE_LEVEL, state.floor * 3);
-              state.streak = level > threshold ? state.streak + 1 : 0;
+              const threshold = Math.max(BARGE_LEVEL, state.floor * 4);
+              const settled = Date.now() - (state.startedAt || 0) > BARGE_GUARD_MS;
+              state.streak = settled && level > threshold ? state.streak + 1 : 0;
               if (level > state.probe) state.probe = level;
               state.gatedMax = Math.max(state.gatedMax || 0, level);
               if (Date.now() - state.probeAt > 3000) {
@@ -2044,11 +2053,12 @@ registerProcessor('aura-capture', AuraCapture);`;
                   gated: Number((state.gatedMax || 0).toFixed(3)),
                   floor: Number(state.floor.toFixed(3)),
                   threshold: Number(threshold.toFixed(3)),
+                  guard: Date.now() - (state.startedAt || 0) < BARGE_GUARD_MS,
                 });
                 state.gatedMax = 0;
                 state.probeAt = Date.now();
               }
-              if (bargeRef.current.streak >= 3) {
+              if (bargeRef.current.streak >= BARGE_FRAMES) {
                 diag('barge_in', { level: Number(level.toFixed(3)), floor: Number(state.floor.toFixed(3)) });
                 bargeRef.current.streak = 0;
                 gateRef.current.active = false;
