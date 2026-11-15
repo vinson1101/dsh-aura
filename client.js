@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.31.6';
+const AURA_VERSION = '0.31.7';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -2168,9 +2168,9 @@ registerProcessor('aura-capture', AuraCapture);`;
                 stopSpeaking();
                 /* The head: only the frames that clearly beat the echo, oldest
                  * first, and only once — the stream continues from here. */
-                const echoRef = Math.max(0.012, (state.echo || 0) * 1.3);
-                const head = (state.headFrames || []).filter((entry) => entry.level > echoRef);
-                for (const entry of head.slice(-6)) vad.push(entry.frame);
+                const head = (state.headFrames || []).slice(-10);
+                for (const entry of head) vad.push(entry.frame);
+                diag('head_replayed', { frames: head.length });
                 state.headFrames = [];
                 /* Nothing is replayed: the reference is explicit that a
                  * retrospective cache repeats onset samples. The first syllable
