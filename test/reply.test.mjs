@@ -399,6 +399,12 @@ assert.equal(ttsBodies.length, 1, 'a settled run is spoken once');
     beacons.some((beacon) => beacon.stage === 'play_end'),
     'playback reports its end once the queue drains',
   );
+  /* Reaching the end of a sentence is not a cancellation: it used to abort the
+   * request for the next one, which surfaced to the user as an error. */
+  assert.ok(
+    !beacons.some((beacon) => beacon.stage === 'tts_error'),
+    'a natural end does not report an error',
+  );
 }
 
 /* ---- a stop lasts until the next turn, not until the next sentence ----- */

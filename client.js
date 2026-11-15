@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.26.0';
+const AURA_VERSION = '0.26.1';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1346,11 +1346,12 @@ registerProcessor('aura-capture', AuraCapture);`;
       const replyBefore = React.useRef('');
 
       /** Stop playback and let the sphere settle. */
-      const stopSpeaking = React.useCallback(() => {
+      const stopSpeaking = React.useCallback((options = {}) => {
+        const cancel = options.abort !== false;
         speakGeneration.current += 1;
         const abort = speechAbort.current;
         speechAbort.current = null;
-        if (abort) {
+        if (abort && cancel) {
           try {
             abort.abort();
           } catch {
@@ -1483,7 +1484,8 @@ registerProcessor('aura-capture', AuraCapture);`;
                   if (voiceRef.current !== playback) return;
                   if (playback.sources.length > 0 || playback.pending > 0) return;
                   diag('play_end');
-                  stopSpeaking();
+                  /* Everything was played: this is not a cancellation. */
+                  stopSpeaking({ abort: false });
                 }, 400);
               };
               source.start(Math.max(playback.at, audio.currentTime));
@@ -1531,9 +1533,15 @@ registerProcessor('aura-capture', AuraCapture);`;
             playback.pending = Math.max(0, playback.pending - 1);
             diag('tts_ok', { chunks, pending: playback.pending });
           } catch (failure) {
+            const cancelled = failure && (failure.name === 'AbortError' || /aborted/i.test(String(failure.message)));
+            if (cancelled) {
+              diag('tts_cancelled');
+              stopSpeaking({ abort: false });
+              return;
+            }
             diag('tts_error', { message: String((failure && failure.message) || failure).slice(0, 200) });
             setError(String((failure && failure.message) || failure));
-            stopSpeaking();
+            stopSpeaking({ abort: false });
           }
         },
         [stopSpeaking],
