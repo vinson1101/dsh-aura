@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.32.2';
+const AURA_VERSION = '0.32.3';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -222,7 +222,7 @@ window.__ModuleLoader__.load({
      * is not something this file should assume twice.
      */
     /** The one live capture, with a number so the beacons can be paired. */
-    const liveCapture = { current: null, seq: 0 };
+    const liveCapture = { current: null, seq: 0, opening: false };
 
     function levelOfFrame(frame) {
       if (!frame) return 0;
@@ -1912,9 +1912,8 @@ registerProcessor('aura-capture', AuraCapture);`;
       const stopCapture = React.useCallback(() => {
         const capture = captureRef.current;
         captureRef.current = null;
-        if (liveCapture.current && (!capture || liveCapture.current.id === capture.id)) {
-          liveCapture.current = null;
-        }
+        liveCapture.current = null;
+        liveCapture.opening = false;
         setListening(false);
         if (!capture) {
           diag('mic_stop_empty');
@@ -1964,10 +1963,11 @@ registerProcessor('aura-capture', AuraCapture);`;
       const startCapture = React.useCallback(async () => {
         /* Opening is asynchronous; without this guard a second call slips in
          * before the first has a stream, and two captures fight for the device. */
-        if (liveCapture.current) {
-          diag('mic_busy', { live: liveCapture.current.id });
+        if (liveCapture.current || liveCapture.opening) {
+          diag('mic_busy', { live: liveCapture.current ? liveCapture.current.id : 'opening' });
           return;
         }
+        liveCapture.opening = true;
         if (openingRef.current || captureRef.current) {
           diag('mic_ignored', { opening: openingRef.current, open: Boolean(captureRef.current) });
           return;
@@ -2233,12 +2233,14 @@ registerProcessor('aura-capture', AuraCapture);`;
           const id = liveCapture.seq;
           const record = { id, stream, audio, source, node, sink, vad, socket };
           liveCapture.current = record;
+          liveCapture.opening = false;
           captureRef.current = record;
           openingRef.current = false;
           setListening(true);
           diag('mic_start', { rate: audio.sampleRate, id });
         } catch (failure) {
           openingRef.current = false;
+          liveCapture.opening = false;
           diag('mic_error', { message: String((failure && failure.message) || failure).slice(0, 160) });
           setError(String((failure && failure.message) || failure));
           try {
