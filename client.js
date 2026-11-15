@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.30.0';
+const AURA_VERSION = '0.31.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1378,8 +1378,10 @@ registerProcessor('aura-capture', AuraCapture);`;
        * of 0.3. The ratio to the room and to the echo is what holds, so the
        * absolute value is only a sanity bound. */
       const BARGE_LEVEL = 0.015;
-      /* Six frames — about 600 ms — is a word, not a click or a cupboard. */
-      const BARGE_FRAMES = 6;
+      /* Two frames is an onset: enough to tell speech from a click and short
+       * enough to stop the voice while the first word is still being said. The
+       * board's AFE uses a 128 ms onset delay for the same reason. */
+      const BARGE_FRAMES = 2;
       /* Playback needs a moment to settle before it can be talked over. */
       const BARGE_GUARD_MS = 400;
       /* Both maxima are reported: an open gate shows what the microphone
@@ -2098,105 +2100,74 @@ registerProcessor('aura-capture', AuraCapture);`;
               return;
             }
             flushHandshake();
-            if (gated()) {
-              /* Keep the last second of audio so an interruption is
-               * transcribed from its beginning, not from its middle. */
-              const recent = bargeRef.current.frames;
-              recent.push(event.data);
-              if (recent.length > 10) recent.shift();
-              const state = bargeRef.current;
-              const level = levelOfFrame(event.data);
 
-              /* The first frames of playback measure the speaker leaking back
-               * into the microphone; that becomes the reference a real voice
-               * has to beat. */
-              /* Average, not maximum: the leak follows the voice, and its peak is
-               * as loud as a person. The mean sits well below speech, which is
-               * what makes speech detectable at all. */
+            const state = bargeRef.current;
+            const level = levelOfFrame(event.data);
+            const playing = gated();
+            const settled = Date.now() - (state.startedAt || 0) > BARGE_GUARD_MS;
+
+            /* Echo is measured only while the player is producing sound; the
+             * room floor only while it is not. */
+            if (playing) {
               state.echo = state.echo === null || state.echo === undefined
                 ? level
                 : state.echo * 0.9 + level * 0.1;
-              state.all = Math.max(state.all, level);
-              /* The threshold follows the room: an air conditioner or a fan is
-               * not an interruption, a voice over it is. */
-              /* A noise floor tracks the room, not the person: learning from
-               * speech is what once pushed the threshold to 0.45 and made
-               * interrupting impossible. Quiet follows down quickly; anything
-               * above the current floor is ignored. */
-              if (state.floor === null) state.floor = level;
-              else if (level < state.floor) state.floor = state.floor * 0.7 + level * 0.3;
-              else state.floor = state.floor * 0.995 + level * 0.005;
-              /* Room tone, its own speaker, and an absolute floor: the noisiest
-               * of the three decides what counts as a voice. */
-              const threshold = Math.max(BARGE_LEVEL, state.floor * 4, (state.echo || 0) * 2);
-              /* Nothing below the loudest leak plus a margin can be a voice. */
-              const settled = Date.now() - (state.startedAt || 0) > BARGE_GUARD_MS;
-              /* Echo follows the player; a voice does not. Above 0.55 the
-               * microphone is plausibly hearing the speaker, and the level has
-               * to be twice as convincing before it counts as a person. */
-              const follows = correlation(state.micHist, state.playHist);
-              const echoLike = follows > 0.55;
-              const needed = echoLike ? threshold * 2 : threshold;
-              state.streak = settled && level > needed ? state.streak + 1 : 0;
-              if (level > state.probe) state.probe = level;
-              state.gatedMax = Math.max(state.gatedMax || 0, level);
-              state.micHist.push(level);
-              state.playHist.push(levelRef.current || 0);
-              if (state.micHist.length > 10) state.micHist.shift();
-              if (state.playHist.length > 10) state.playHist.shift();
-              if (Date.now() - state.probeAt > 3000) {
-                diag('mic_level', {
-                  gated: Number((state.gatedMax || 0).toFixed(3)),
-                  floor: Number(state.floor.toFixed(3)),
-                  echo: Number((state.echo || 0).toFixed(3)),
-                  ratio: Number((state.probe / Math.max(0.001, state.echo || 0)).toFixed(1)),
-                  corr: Number(correlation(state.micHist, state.playHist).toFixed(2)),
-                  threshold: Number(threshold.toFixed(3)),
-                  guard: Date.now() - (state.startedAt || 0) < BARGE_GUARD_MS,
-                });
-                state.gatedMax = 0;
-                state.probeAt = Date.now();
-              }
-              /* Once per burst: after a trigger the microphone has to fall
-               * quiet for a while before the same utterance can interrupt
-               * again. */
-              const cooled =
-                state.lastBargeAt === undefined || Date.now() - state.lastBargeAt > 1200;
-              const already = !cooled;
-              if (state.streak >= BARGE_FRAMES && !already) {
-                state.lastBargeAt = Date.now();
-                diag('barge_in', {
-                  level: Number(level.toFixed(3)),
-                  floor: Number(state.floor.toFixed(3)),
-                  threshold: Number(threshold.toFixed(3)),
-                });
-                bargeRef.current.streak = 0;
-                gateRef.current.active = false;
-                gateRef.current.until = 0;
-                gaggedRef.current = runSeqRef.current;
-                stopSpeaking();
-                /* The buffered frames are the speaker leaking back, not the
-                 * person: feeding them to the recognizer is what made later
-                 * transcripts contain the assistant voice. Discard them and
-                 * accept that the first syllable may be cut. */
-                /* The confirmation takes ~600 ms, so the opening of the
-                 * sentence is inside this buffer. Keep 800 ms of it, and only
-                 * the frames that stand above the echo floor: what is quiet in
-                 * there is the speaker, not the person. */
-                const echoFloor = Math.max(0.01, (state.echo || 0) * 1.2);
-                const spoken = recent.filter((frame) => levelOfFrame(frame) > echoFloor);
-                for (const frame of spoken.slice(-8)) vad.push(frame);
-                recent.length = 0;
-              }
-              return;
+            } else if (state.floor === null) {
+              state.floor = level;
+            } else if (level < state.floor) {
+              state.floor = state.floor * 0.7 + level * 0.3;
+            } else {
+              state.floor = state.floor * 0.995 + level * 0.005;
             }
-            /* The gate reopened: whatever the tail swallowed is the start of
-             * the next sentence. Hand it over before the live frame. */
-            const tail = bargeRef.current.frames.splice(0);
-            for (const frame of tail.slice(-3)) vad.push(frame);
-            bargeRef.current.streak = 0;
-            bargeRef.current.all = Math.max(bargeRef.current.all || 0, levelOfFrame(event.data));
+
+            state.gatedMax = Math.max(state.gatedMax || 0, level);
+            state.all = Math.max(state.all || 0, level);
+            state.micHist.push(level);
+            state.playHist.push(levelRef.current || 0);
+            if (state.micHist.length > 10) state.micHist.shift();
+            if (state.playHist.length > 10) state.playHist.shift();
+
+            /* Continuous uplink. The board forwards every AFE frame and lets
+             * AEC remove its own voice; here echoCancellation is asked to do
+             * the same job, so the recognizer is never deaf. */
             vad.push(event.data);
+
+            if (!playing) return;
+
+            const threshold = Math.max(BARGE_LEVEL, (state.floor || 0) * 4, (state.echo || 0) * 2);
+            const follows = correlation(state.micHist, state.playHist);
+            const echoLike = follows > 0.55;
+            const needed = echoLike ? threshold * 2 : threshold;
+            state.streak = settled && level > needed ? state.streak + 1 : 0;
+
+            if (Date.now() - state.probeAt > 3000) {
+              diag('mic_level', {
+                level: Number(level.toFixed(3)),
+                echo: Number((state.echo || 0).toFixed(3)),
+                floor: Number((state.floor || 0).toFixed(3)),
+                corr: Number(follows.toFixed(2)),
+                threshold: Number(needed.toFixed(3)),
+                playing,
+              });
+              state.probeAt = Date.now();
+            }
+
+            const cooled =
+              state.lastBargeAt === undefined || Date.now() - state.lastBargeAt > 1200;
+            if (state.streak >= BARGE_FRAMES && cooled) {
+              state.lastBargeAt = Date.now();
+              state.streak = 0;
+              diag('barge_in', {
+                level: Number(level.toFixed(3)),
+                echo: Number((state.echo || 0).toFixed(3)),
+                corr: Number(follows.toFixed(2)),
+                needed: Number(needed.toFixed(3)),
+              });
+              gateRef.current.active = false;
+              gateRef.current.until = 0;
+              gaggedRef.current = runSeqRef.current;
+              stopSpeaking();
+            }
           };
           captureRef.current = { stream, audio, source, node, sink, vad, socket };
           setListening(true);
