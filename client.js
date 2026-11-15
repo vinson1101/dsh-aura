@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.25.0';
+const AURA_VERSION = '0.25.1';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -746,6 +746,17 @@ registerProcessor('aura-capture', AuraCapture);`;
         font: inherit; font-size: 12px; cursor: pointer; opacity: .7; }
       .aura-model[data-on='true'] { opacity: 1; border-color: rgba(255,255,255,.4);
         background: rgba(255,255,255,.12); }
+      /* Beside the orb, not in a settings panel: a call is an action. */
+      .aura-call { position: absolute; right: 4px; bottom: 4px; width: 52px; height: 52px;
+        display: grid; place-items: center; border-radius: 999px; cursor: pointer;
+        border: 1px solid rgba(160,170,190,.28); background: rgba(120,132,152,.22);
+        color: inherit; backdrop-filter: blur(10px);
+        transition: background .15s ease, border-color .15s ease, transform .15s ease; }
+      .aura-call:hover { background: rgba(120,132,152,.34); transform: scale(1.04); }
+      .aura-call[data-active='true'] { background: #e5484d; border-color: transparent; color: #fff;
+        animation: aura-record 1.5s ease-out infinite; }
+      .aura-call[data-active='true']:hover { background: #d93d42; }
+      @media (prefers-reduced-motion: reduce) { .aura-call[data-active='true'] { animation: none; } }
       .aura-voices { max-height: 216px; overflow-y: auto; overscroll-behavior: contain;
         margin: 0 -6px; padding: 0 6px; }
       .aura-act { height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,.16);
@@ -889,6 +900,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       minHeight: 160,
       display: 'grid',
       placeItems: 'center',
+      position: 'relative',
       overflow: 'hidden',
     };
     /* No size here: the form writes both CSS sides and the backing store. */
@@ -1917,6 +1929,23 @@ registerProcessor('aura-capture', AuraCapture);`;
         else void startCapture();
       }, [startCapture, stopCapture]);
 
+      /**
+       * A call is a mode you enter, not a setting you flip: it turns the
+       * session continuous (the microphone comes back by itself) and it ends
+       * when you hang up, which returns to turn-taking.
+       */
+      const callActive = (prefs.mode || 'talk') === 'chat';
+      const toggleCall = React.useCallback(() => {
+        if (callActive) {
+          choose({ mode: 'talk' });
+          if (captureRef.current) stopCapture();
+          stopSpeaking();
+        } else {
+          choose({ mode: 'chat' });
+          if (!captureRef.current) void startCapture();
+        }
+      }, [callActive, choose, startCapture, stopCapture, stopSpeaking]);
+
       return h(
         'div',
         { style: PANE, 'data-aura-phase': phase, ref: paneRef },
@@ -1972,25 +2001,6 @@ registerProcessor('aura-capture', AuraCapture);`;
               h(
                 'div',
                 null,
-                h('div', { className: 'aura-cap' }, '模式'),
-                h(
-                  'div',
-                  { className: 'aura-models' },
-                  ...MODES.map((entry) =>
-                    h(
-                      'button',
-                      {
-                        type: 'button',
-                        key: entry.id,
-                        className: 'aura-model',
-                        'data-on': String((prefs.mode || MODES[0].id) === entry.id),
-                        title: entry.note,
-                        onClick: () => choose({ mode: entry.id }),
-                      },
-                      entry.name,
-                    ),
-                  ),
-                ),
                 h('div', { className: 'aura-cap' }, '模型'),
                 h(
                   'div',
@@ -2129,6 +2139,19 @@ registerProcessor('aura-capture', AuraCapture);`;
           'div',
           { style: STAGE, role: 'img', 'aria-label': `Aura ${phase}` },
           h('canvas', { ref: canvasRef, style: CANVAS }),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'aura-call',
+              'data-active': String(callActive),
+              title: callActive ? '挂断' : '通话',
+              'aria-label': callActive ? 'End call' : 'Start call',
+              'aria-pressed': String(callActive),
+              onClick: toggleCall,
+            },
+            callActive ? h(HangupIcon, null) : h(PhoneIcon, null),
+          ),
         ),
         h(
           'div',
@@ -2229,6 +2252,48 @@ registerProcessor('aura-capture', AuraCapture);`;
         h('rect', { x: 9, y: 3, width: 6, height: 11, rx: 3 }),
         h('path', { d: 'M5 11a7 7 0 0 0 14 0' }),
         h('line', { x1: 12, y1: 18, x2: 12, y2: 21 }),
+      );
+
+    /** Start a call: an ordinary handset. */
+    const PhoneIcon = () =>
+      h(
+        'svg',
+        {
+          viewBox: '0 0 24 24',
+          width: 22,
+          height: 22,
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.9,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': true,
+          style: { display: 'block' },
+        },
+        h('path', {
+          d: 'M6.5 3.5h3l1.5 4-2 1.5a11 11 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4.5 5.7 2 2 0 0 1 6.5 3.5Z',
+        }),
+      );
+
+    /** End a call: the same handset, hung up. */
+    const HangupIcon = () =>
+      h(
+        'svg',
+        {
+          viewBox: '0 0 24 24',
+          width: 22,
+          height: 22,
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.9,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': true,
+          style: { display: 'block', transform: 'rotate(135deg)' },
+        },
+        h('path', {
+          d: 'M6.5 3.5h3l1.5 4-2 1.5a11 11 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4.5 5.7 2 2 0 0 1 6.5 3.5Z',
+        }),
       );
 
     /** Send: an arrow, drawn like the other two instead of a keyboard glyph. */
