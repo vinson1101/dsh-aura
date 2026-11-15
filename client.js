@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.31.2';
+const AURA_VERSION = '0.31.3';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -2114,6 +2114,11 @@ registerProcessor('aura-capture', AuraCapture);`;
             const settled = Date.now() - (state.startedAt || 0) > BARGE_GUARD_MS;
 
             if (playing) {
+              /* A short ring of what the gate is about to swallow: the head of
+               * a sentence lives here, and the confirm takes three frames. */
+              const ring = state.headFrames || (state.headFrames = []);
+              ring.push({ frame: event.data, level });
+              if (ring.length > 10) ring.shift();
               /* Echo is only meaningful while the player is making sound. */
               state.echo = state.echo === null || state.echo === undefined
                 ? level
@@ -2154,6 +2159,12 @@ registerProcessor('aura-capture', AuraCapture);`;
                 gateRef.current.until = 0;
                 gaggedRef.current = runSeqRef.current;
                 stopSpeaking();
+                /* The head: only the frames that clearly beat the echo, oldest
+                 * first, and only once — the stream continues from here. */
+                const echoRef = Math.max(0.012, (state.echo || 0) * 1.3);
+                const head = (state.headFrames || []).filter((entry) => entry.level > echoRef);
+                for (const entry of head.slice(-6)) vad.push(entry.frame);
+                state.headFrames = [];
                 /* Nothing is replayed: the reference is explicit that a
                  * retrospective cache repeats onset samples. The first syllable
                  * of an interruption may be lost; a duplicated one is worse. */
@@ -2162,6 +2173,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               return;
             }
 
+            if (state.headFrames) state.headFrames = [];
             if (state.floor === null) state.floor = level;
             else if (level < state.floor) state.floor = state.floor * 0.7 + level * 0.3;
             else state.floor = state.floor * 0.995 + level * 0.005;
