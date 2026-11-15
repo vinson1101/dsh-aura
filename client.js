@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.32.4';
+const AURA_VERSION = '0.32.5';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -2057,9 +2057,19 @@ registerProcessor('aura-capture', AuraCapture);`;
             };
           });
 
+          /* Measured: with echoCancellation on, the microphone reports exactly
+           * 0.001 for the whole of a playback — it is being ducked, not quiet.
+           * The constraint is a preference so the two can be compared. */
+          const useAec = prefsRef.current.aec === true;
           const stream = await media.getUserMedia({
-            audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+            audio: {
+              channelCount: 1,
+              echoCancellation: useAec,
+              noiseSuppression: useAec,
+              autoGainControl: useAec,
+            },
           });
+          diag('mic_constraints', { aec: useAec });
           const audio = new AudioCtor({ sampleRate: SAMPLE_RATE });
           const url = URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: 'application/javascript' }));
           try {
