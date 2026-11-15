@@ -1,5 +1,6 @@
 /**
- * Mounts the Aura pane in jsdom and fails on anything the browser would hit.
+ * Mounts the Aura pane in jsdom and exercises its lifecycle effects.
+ * Native Client dependency activation and real audio require live verification.
  *
  * This exists because a static render is not enough: `renderToStaticMarkup`
  * never runs effects, and the one bug this file was written for — a form
@@ -9,7 +10,9 @@
  * Run: node test/pane.test.mjs
  */
 import assert from 'node:assert/strict';
+import { withInstanceSocket } from './instance-socket.mjs';
 import fs from 'node:fs';
+import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,11 +21,30 @@ import { JSDOM } from 'jsdom';
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const source = fs.readFileSync(path.join(here, '..', 'client.js'), 'utf8');
+const manifest = JSON.parse(fs.readFileSync(path.join(here, '..', 'package.json'), 'utf8'));
+for (const dependency of ['@deepseek-ai/dsh-api-remotes', '@deepseek-ai/dsh-client-ui-renderer']) {
+  assert.ok(manifest.dsh.client.inject.includes(dependency), `Client graph must include ${dependency}`);
+}
+assert.ok(source.includes(`const AURA_VERSION = '${manifest.version}';`), 'Client and bundle versions must agree');
+
+/* HMR reinjects classic scripts into the SAME page, not a fresh Function scope.
+ * Once the old module is invalidated, registration must work again without a
+ * global lexical redeclaration error that leaves its shortcuts unregistered. */
+const replacements = [];
+const page = vm.createContext({ window: { __ModuleLoader__: { load: value => replacements.push(value) } } });
+vm.runInContext('const AURA_VERSION = "legacy-page";', page);
+vm.runInContext(source, page, { filename: 'aura-initial.js' });
+assert.doesNotThrow(() => vm.runInContext(source, page, { filename: 'aura-replacement.js' }), 'same-page Client replacement must be repeatable');
+assert.equal(replacements.length, 2);
+assert.equal(/watchForNewVersion|reload_for_version/.test(source), false, 'updates must not schedule automatic whole-app version reloads; explicit recovery buttons remain available');
 
 /* ---- environment -------------------------------------------------------- */
 
-const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true });
+const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true, url: 'http://127.0.0.1:52147' });
 const { window } = dom;
+// Legacy versions persisted a live call. Reopening must preserve preferences,
+// not pretend that a microphone/recognizer connection survived the restart.
+window.localStorage.setItem('dsh-aura.prefs', JSON.stringify({ mode: 'chat', avatar: '' }));
 
 /* A 2D context stub: the pane only needs these calls to exist. */
 const painted = { clear: 0, fill: 0 };
@@ -85,6 +107,7 @@ const globals = {
   navigator: window.navigator,
   HTMLElement: window.HTMLElement,
   ResizeObserver: ResizeObserverStub,
+  WebSocket: withInstanceSocket(),
 };
 for (const [key, value] of Object.entries(globals)) {
   Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
@@ -95,7 +118,7 @@ for (const [key, value] of Object.entries(globals)) {
 let captured = null;
 window.__ModuleLoader__ = { load: (definition) => { captured = definition; } };
 // The bundle posts stage beacons to the host; keep the test offline.
-window.fetch = () => Promise.resolve({ ok: true });
+window.fetch = () => Promise.resolve({ ok: true, json: async () => ({ origin: 'http://127.0.0.1:52147' }) });
 globalThis.fetch = window.fetch;
 
 new Function('window', source)(window);
@@ -106,6 +129,10 @@ const plugin = captured.factory((name) => {
   if (name === 'react') return require('react');
   throw new Error('unexpected module request: ' + name);
 });
+
+for (const service of ['slots', 'remote', 'remote.commands']) {
+  assert.ok(plugin.inject.includes(service), `client must declare its ${service} dependency`);
+}
 
 /* ---- apply into a fake context ------------------------------------------ */
 
@@ -164,6 +191,13 @@ assert.ok(
   `the pane must not show a crash: ${text.slice(0, 200)}`,
 );
 assert.equal(pane.component.name, 'AuraPane');
+assert.match(text, /任务独立执行/);
+assert.match(text, /\/aura off/);
+const call = container.querySelector('button[aria-label="Start call"]');
+assert.ok(call, 'a previously saved call must reopen as Start call, not Hang up');
+assert.equal(container.querySelector('button[aria-label="End call"]'), null);
+assert.equal(container.querySelector('[data-aura-phase]').dataset.auraPhase, 'idle', 'restart does not restore an unconnected call');
+assert.equal(call.parentElement.getAttribute('role'), 'group', 'interactive call button must not be hidden inside role=img');
 
 /* The version and the reload control live inside the profile card; a stale
  * page and a broken feature look identical without them. */
@@ -257,7 +291,8 @@ assert.equal(textarea.style.overflowY, 'hidden', 'no scrollbar when it fits');
   const call = container.querySelector('button[aria-label="Start call"]');
   assert.ok(call, 'the stage carries a call control');
   assert.equal(call.getAttribute('data-active'), 'false', 'and it starts idle');
-  assert.ok(!container.textContent.includes('模式'), 'the card offers no mode setting');
+  assert.equal(call.closest('.aura-card'), null, 'call is a stage action, not a profile setting');
+  assert.equal(call.title, '通话');
 }
 
 root.unmount();

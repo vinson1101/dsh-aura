@@ -1,7 +1,7 @@
 {
   "meta": {
-    "title": "Aura 粒子球",
-    "description": "固定在 Web UI 上的呼吸粒子球；会话运行时转得更快，并按状态变色。",
+    "title": "Aura",
+    "description": "陪伴真实会话的语音助手：前台随时交流，任务独立执行，自然插话不打断已派发的工作。",
     "detail": "docs/DETAIL.md"
   }
 }

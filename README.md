@@ -1,141 +1,128 @@
-# dsh-aura
+# Aura for DeepSeek Harness
 
-A presence for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness):
-something that lives beside the conversation and shows what the agent is doing,
-and that you will eventually talk to.
+A voice companion beside the real conversation. The right sidebar handles
+listening and speech; the middle column remains the conversation and work history.
+The particle orb is a replaceable form, not Aura itself.
 
-**A form is what you see; the orb is only the first one.** Today's form is a
-canvas particle sphere — 1900 points on a golden-angle sphere, no WebGL, no 3D
-library, no image assets, no network. It breathes at rest and turns faster while
-a session runs; its colour follows the session phase. A Live2D model, a digital
-human or a plain status pill can take its place without touching the state or
-the slot wiring.
+## Conversation, speech and work have separate owners
 
-> **Status: v0.5 — docked, and it drives the session.** The orb lives in a
-> right-sidebar tab, reads real session state, and the pane carries a composer
-> that sends into the session shown in the middle column and can cancel its run.
-> Microphone capture and speech come next; see [Roadmap](#roadmap).
+- **Simple questions:** the foreground answers directly.
+- **Actual work:** the foreground dispatches an independent native managed worker
+  with the full request, context and authorization. It returns immediately, rather
+  than waiting for the task. Progress uses native agent messages; completion is
+  delivered back to the parent conversation.
+- **Natural interruption:** differing recognized speech silences obsolete playback;
+  the final transcript replaces only the foreground turn. Already-dispatched work
+  continues. There are no interruption keywords.
+- **Echo protection:** opening the microphone does not mute Aura. Recognized echoes
+  of its recent speech are ignored; real partial speech stops playback. PCM frames
+  are delivered once, including audio captured while recognition opens.
+- **Explicit task cancellation:** ask Aura to interrupt the named worker. This stops
+  that worker's current execution, not its independent descendants or all queued
+  work. Muting, hanging up, and switching out of Aura mode do not cancel tasks.
 
-![The orb](icon.svg)
+Foreground execution is enforced by an agent-scoped native tool guard, not just
+prompt instructions. Native agent status and messaging tools remain available;
+workers retain the original capable preset. The inherited tool catalog stays
+stable, but disallowed foreground execution is rejected. No global prompt is added
+and ordinary sessions are unaffected.
 
-## What works today
+## One Aura per runtime
 
-| Phase | Trigger | Colour | Motion |
-| --- | --- | --- | --- |
-| `idle` | no session running | blue | slow turn, 2 Hz breathing |
-| `running` | any session has `running: true` | violet | fast turn, 6 Hz breathing |
-| `waiting` | a session has a pending user interaction | coral | slow turn |
-| `done` | a run settled less than 3.5 s ago | green | slow turn |
+The Host grants one live Aura instance across all sessions and windows. It binds
+one foreground conversation; additional panes show an existing-instance notice
+and cannot open another microphone or voice player. There is no automatic takeover.
+Close the original pane, then explicitly reopen/retry in the other window.
 
-- Hovering grows the orb; the canvas repaints at device-pixel density (capped at 2×).
-- `prefers-reduced-motion: reduce` draws a single frame instead of animating, and
-  still repaints when the phase changes.
-- A hidden tab stops the animation loop; coming back resumes it.
-- Unmounting disposes the animation frame, the `ResizeObserver` and both listeners.
+Closing or losing the instance releases microphone, recognition and playback,
+not dispatched workers. Host audio routes require the current instance token;
+closed, timed-out and restarted connections cannot reuse old audio authority.
+Calls and pending playback are live state, **not saved preferences**: after a
+restart, refresh or remount the call button resets, with no automatic microphone
+activation or replay. Voice/model/avatar preferences still persist.
+
+## Using Aura
+
+Open the **Aura** right-sidebar tab from the session header button. Type in its
+composer, click the microphone, or start a call. Enter sends; Shift+Enter adds a
+newline. Replies appear in the middle column and can be spoken sentence by sentence.
+
+The first submission enables Aura foreground mode **for that session**, including
+subsequent messages typed in the middle column. Native session commands:
+
+| Command | Effect |
+| --- | --- |
+| `/aura on` | Enable foreground mode. Refuses to convert an ordinary session already doing work. Use an idle or new session instead. |
+| `/aura off` | Restore ordinary execution in this session; workers continue. |
+| `/aura interrupt` | Cancel and drain only the foreground turn, preserving queued input. |
+
+Use `/aura off` in the middle-column command input before returning to ordinary
+in-session execution. Sending through the Aura sidebar enables the mode again.
+Mode is restored from successful native command records after session resume or
+plugin reload. The orb reflects foreground/session activity; an idle foreground
+can still have independently running workers. Ask for task status or use the
+native agent view.
+
+Microphone, speech and errors remain in the sidebar. **Silence** stops speech only.
+No task-tree cancellation is implied by any voice control.
 
 ## Install
 
-Not on the plugin market yet. From a checkout of this repository:
-
-```sh
-dsh plugin add /path/to/dsh-aura
-```
-
-Then reload the Web UI. A small sphere button appears in the session header;
-clicking it docks the **Aura** tab in the right sidebar, where it stays while you
-work. The tab is also listed in the right bar's own picker.
-
-## Roadmap
-
-- [x] **v0.1 — orb.** Canvas sphere, session-phase colours, lifecycle disposal.
-- [x] **v0.2 — docked.** Register a right-sidebar tab type, open it from a header
-      button, and keep it resident beside the conversation.
-- [x] **v0.3 — drive.** A composer that sends into the current session
-      (`prompt`, queue mode) and a stop control (`cancel`).
-- [x] **v0.3 — ears.** Microphone capture, energy endpointing, speech-to-text,
-      and the transcript placed in the composer.
-- [ ] **v0.4 — voice.** Spoken replies with streaming TTS, sentence by sentence.
-- [ ] **v0.4a — streaming ears.** Cut the 800 ms wait by streaming PCM to a
-      realtime provider; the endpointing contract stays the same.
-- [ ] **v0.5 — interruption.** Speaking while the agent runs cancels the turn
-      (`ISession.cancel()`) and steers the new request in (`mode: 'steer'`).
-- [ ] **v0.6 — face.** Expressions and gestures driven by the phase and by the
-      streamed thinking chain.
-- [ ] **v0.7 — other forms.** Live2D, a digital human, and a text pill as
-      alternative forms of the same presence, selectable per workspace.
-- [ ] **v0.8 — character packs.** A directory format for one character: identity
-      (name, portrait), expression and motion set, voice sample or voice id, and
-      the persona prompt that goes with it. The form loads a pack; swapping a
-      character means pointing at another pack, not editing code.
-
-Two rules carried over from the reference desktop client, because they are what
-makes an assistant trustworthy rather than merely decorative:
-
-1. **Muting stops playback; only cancel aborts the run.** They are different actions.
-2. **A finished tool step is not a finished task.** The orb stays `running` until
-   the turn actually settles.
-
-## Development
-
-```sh
-npm install
-npm test        # mounts the pane in jsdom and fails on anything the browser would hit
-```
-
-The test exists because a static render is not enough: `renderToStaticMarkup`
-never runs effects, and the first real bug in this plugin — a forms registry that
-held a function where the pane called `.mount` — threw inside `useEffect`. A
-static render passed while the pane rendered nothing in the app.
-
-### Diagnostics
-
-The pane posts four stage beacons (`factory`, `apply`, `registered`,
-`mounted`, plus `crash`) to a host route that appends them to
-`$DSH_HOME/aura-diag.jsonl`. A slot entry that never mounts looks exactly like a
-plugin that is not installed, and the renderer console cannot be read from outside
-the app, so this file is the only way to tell those two apart. The host half needs
-a DSH restart to serve the route; the browser half is picked up on reload.
+Requires DeepSeek Harness `>=0.2.2-rc.3 <0.3.0-0`, the Web UI, microphone permission,
+and a Bailian/DashScope provider key for voice. In **Plugins → Add plugin**, select
+this repository's local directory. Updates use the same bundle installation flow.
+Refresh the existing GUI after the updated bundle is applied.
 
 ## Credentials
 
-The provider key is never committed and never reaches the browser. It resolves
-per request, so a rotated key applies to the next utterance without a restart:
+The provider key stays on the host, is never sent to the browser, and resolves per
+request in this order:
 
-1. the plugin row's `asr.apiKey` (a literal, for a throwaway profile)
-2. the DSH credential record `dsh-aura/asr`
-3. the environment (`DASHSCOPE_API_KEY`, or the bridge's `XOB_BAILIAN_API_KEY`)
-4. `$DSH_HOME/aura-secrets.env`, the `.env` convention the Zebra bridge uses
+1. Plugin configuration `asr.apiKey`.
+2. DSH credential record `dsh-aura/asr`.
+3. `DASHSCOPE_API_KEY` or `XOB_BAILIAN_API_KEY` in the environment.
+4. `$DSH_HOME/aura-secrets.env`.
 
-The file is the recommended place for a machine-local key:
+Keep credentials local and out of source control. A rotated key applies to the next
+utterance without a restart. See [providers](docs/PROVIDERS.md) and
+[voices](docs/VOICES.md) for provider choices.
+
+## Development and verification
 
 ```sh
-install -m 600 /dev/null "$HOME/.dsh/aura-secrets.env"
-printf 'DASHSCOPE_API_KEY=...\n' >> "$HOME/.dsh/aura-secrets.env"
+npm install
+npm test
+# Optional native Cordis contract test against the running Desktop installation:
+ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" test/runtime.cjs
 ```
 
-`test/secrets.test.mjs` also scans this repository for key-shaped strings and
-fails the suite if one appears.
+The regression suite covers recognition lifecycle, fallback, PCM delivery, echo,
+barge-in, speech, sidebar submission, task dispatch contracts and repeated classic-
+script loading in the same page (including an upgrade from the legacy global
+version declaration). Client state belongs inside the module factory, not global
+lexical declarations. Module replacement belongs to the Host; Aura does not poll
+for updates and automatically refresh the whole application. The optional
+native test checks real Cordis registrations, tool schemas, scoped guards and
+worker-scope isolation without changing the profile or using a model.
 
-## Design notes
+These tests do not substitute for a live microphone/speaker check or an actual
+model-dispatched worker surviving an interruption. Verify those in the existing
+GUI after installation. A native worker runs independently only after dispatch is
+accepted; cancellation before publication can still reject dispatch.
 
-The presence paints into `shell.overlay`, the frame-wide layer that is
-click-through by default; the orb opts back into pointer events so it never
-blocks the app.
+Diagnostics from the browser post stage beacons to `/aura/diag`, stored on the host
+in `$DSH_HOME/aura-diag.jsonl`. They help distinguish an unmounted sidebar from a
+client crash. Do not log provider credentials.
 
-A form is `mount(canvas, readPhase) -> { refresh, dispose }`. `client.js` keeps
-them in one `FORMS` map, so a new form is one entry plus its own renderer — the
-phase machine, the selectors and the slot registration stay put.
+## Forms and accessibility
 
-Phase comes from the slot's `useSessionStatus` selector hook over
-`ReadonlyMap<SessionId, SessionStatus>`. Selectors return primitives — an object
-would change identity on every snapshot and re-render on unrelated sessions.
+The current form is a canvas particle sphere with no WebGL. Forms can be replaced
+without changing conversation, voice or task ownership. Reduced-motion mode draws
+without continuous animation; hidden tabs pause painting, and unmount cleans up
+listeners, animation frames and microphone resources.
 
-## Credits
+## Credits and license
 
-- Orb geometry, palette and motion are derived from the **Zebra** desktop
-  assistant, a private project by the same author.
-- Slot, locale and manifest conventions follow the DeepSeek Harness plugin docs.
-
-## License
-
-[MIT](LICENSE)
+Orb geometry and palette derive from **Zebra**, a private project by the same
+author. Slot and bundle conventions follow DSH's installed plugin documentation.
+[MIT](LICENSE).

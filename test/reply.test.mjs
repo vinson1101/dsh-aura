@@ -6,6 +6,7 @@
  * event window, not from a value the test hands over directly.
  */
 import assert from 'node:assert/strict';
+import { withInstanceSocket, controls } from './instance-socket.mjs';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -18,7 +19,7 @@ const source = fs.readFileSync(path.join(here, '..', 'client.js'), 'utf8');
 
 /* ---- environment -------------------------------------------------------- */
 
-const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true });
+const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true, url: 'http://127.0.0.1:52147' });
 const { window } = dom;
 
 const context2d = {
@@ -51,7 +52,11 @@ class AudioContextStub {
     contextCount += 1;
     this.sampleRate = options.sampleRate || 48000;
     this.destination = {};
+    this.state = "running";
+    this.audioWorklet = { addModule: async () => {} };
   }
+  createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+  createGain() { return { gain: { value: 1 }, connect() {}, disconnect() {} }; }
   createBuffer(channels, length, rate) {
     const data = new Float32Array(length);
     return {
@@ -67,7 +72,7 @@ class AudioContextStub {
       onended: null,
       connect() {},
       start() { played.push({ rate: this.buffer.sampleRate, length: this.buffer.length }); },
-      stop() {},
+      stop() { this.stopped = true; },
     };
     createdSources.push(source);
     return source;
@@ -82,6 +87,35 @@ class AudioContextStub {
   close() { return Promise.resolve(); }
 }
 window.AudioContext = AudioContextStub;
+let captureNode;
+class AudioWorkletNodeStub {
+  constructor() { this.port = {}; captureNode = this; }
+  connect() {}
+  disconnect() {}
+}
+window.URL.createObjectURL = () => 'blob:aura';
+window.URL.revokeObjectURL = () => {};
+Object.defineProperty(window.navigator, 'mediaDevices', { value: {
+  getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }),
+} });
+let speechSocket;
+class WebSocketStub {
+  constructor() {
+    speechSocket = this;
+    this.readyState = 1;
+    this.bytes = 0;
+    window.setTimeout(() => this.onopen?.({}), 1);
+  }
+  receive(message) { this.onmessage?.({ data: JSON.stringify(message) }); }
+  send(value) {
+    if (typeof value !== 'string') { this.bytes += value.byteLength; return; }
+    const message = JSON.parse(value);
+    if (message.type === 'hello') this.receive({ type: 'hello' });
+    if (message.state === 'start') this.receive({ type: 'listen', state: 'start' });
+  }
+  close() { this.readyState = 3; }
+}
+
 
 /* ---- session, providers, services -------------------------------------- */
 
@@ -120,10 +154,11 @@ window.fetch = async (url, init = {}) => {
   return { ok: true, status: 204, async json() { return {}; }, async text() { return ''; } };
 };
 
+let cancelCount = 0;
 const prompts = [];
 const session = {
   async prompt(content, mode) { prompts.push({ content, mode }); return { ok: true, value: { accepted: true } }; },
-  async cancel() { return { ok: true, value: { accepted: true } }; },
+  async cancel() { cancelCount += 1; return { ok: true, value: { accepted: true } }; },
 };
 /* The window holds the previous reply during a run; the new one appears when it
  * ends. The pane must speak the difference, not whatever is newest. */
@@ -165,6 +200,13 @@ const eventSource = {
     });
   },
 };
+const commands = [];
+let commandFailure = null;
+const remote = { commands: { async execute(id, line) {
+  commands.push({ id, line });
+  if (commandFailure) return { ok: true, value: { result: { kind: 'error', text: commandFailure } } };
+  return { ok: true, value: { result: { kind: 'success' } } };
+} } };
 const services = {
   get(name) {
     if (name === 'sessions') {
@@ -176,6 +218,9 @@ const services = {
 
 const globals = {
   window,
+  AudioWorkletNode: AudioWorkletNodeStub,
+  WebSocket: withInstanceSocket(WebSocketStub),
+  location: { origin: "http://127.0.0.1:52147", protocol: "http:", host: "127.0.0.1:52147" },
   document: window.document,
   navigator: window.navigator,
   HTMLElement: window.HTMLElement,
@@ -215,6 +260,7 @@ const slots = {
   },
 };
 plugin.apply({
+  remote,
   inject: (_services, callback) =>
     callback({
       sidebarRightTabs: { register: () => () => {} },
@@ -230,10 +276,14 @@ const pane = registrations.find((entry) => entry.registration.name === 'sidebar.
 const container = window.document.getElementById('root');
 const root = createRoot(container);
 
-/* The session's running flag is what the pane watches for the end of a run. */
+/* The hook exposes ALL sessions. A different window (or managed worker) stays
+ * busy throughout: it must never suppress this session's completion or voice. */
 let running = false;
 const render = () => {
-  const statusMap = new Map([['session-test', { running, pendingInteraction: undefined }]]);
+  const statusMap = new Map([
+    ['session-other', { running: true, pendingInteraction: { kind: 'approval' } }],
+    ['session-test', { running, pendingInteraction: undefined }],
+  ]);
   root.render(
     React.createElement(pane.component, {
       sessionId: 'session-test',
@@ -241,8 +291,18 @@ const render = () => {
     }),
   );
 };
+window.sessionStorage.setItem('dsh-aura.speak-next', '1');
 render();
 await new Promise((resolve) => setTimeout(resolve, 40));
+assert.equal(container.querySelector('[data-aura-phase]').dataset.auraPhase, 'idle', 'other running/waiting sessions do not drive this pane');
+// Old persisted playback intent cannot arm a newly mounted instance.
+running = true; render();
+await new Promise(resolve => setTimeout(resolve, 20));
+replyText = '不是 Aura 请求的历史回答。';
+eventSource.finish(replyText);
+running = false; render();
+await new Promise(resolve => setTimeout(resolve, 160));
+assert.equal(ttsBodies.length, 0, 'restart never restores legacy pending playback');
 
 /* ---- send a message, run, then settle ---------------------------------- */
 
@@ -358,7 +418,7 @@ assert.equal(ttsBodies.length, 1, 'a settled run is spoken once');
   await new Promise((resolve) => setTimeout(resolve, 300));
 }
 
-/* ---- a voice input during a run steers it instead of queueing ---------- */
+/* ---- ordinary new input cancels only foreground, then queues ---------- */
 
 {
   const textarea4 = container.querySelector('textarea');
@@ -367,13 +427,14 @@ assert.equal(ttsBodies.length, 1, 'a settled run is spoken once');
   render();
   await new Promise((resolve) => setTimeout(resolve, 20));
 
-  setValue4.call(textarea4, '打断一下');
+  setValue4.call(textarea4, '换个话题，今天晚饭吃什么？');
   textarea4.dispatchEvent(new window.Event('input', { bubbles: true }));
   await new Promise((resolve) => setTimeout(resolve, 10));
   container.querySelector('button[aria-label="Send"]').click();
   await new Promise((resolve) => setTimeout(resolve, 30));
 
-  assert.equal(prompts.at(-1).mode, 'steer', 'a message sent during a run interrupts it');
+  assert.equal(prompts.at(-1).mode, 'queue', 'replacement follows foreground cancellation');
+  assert.deepEqual(commands.slice(-2).map(c => c.line), ['/aura on', '/aura interrupt']);
 
   running = false;
   render();
@@ -485,6 +546,146 @@ assert.equal(ttsBodies.length, 1, 'a settled run is spoken once');
   assert.ok(ttsBodies.length > beforeNew, 'a new turn speaks again');
   running = false;
   render();
+}
+
+// Real microphone handler + real streaming reply: barge-in only silences audio.
+{
+  running = true;
+  render();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  eventSource.pushLive('我继续说明实现方式。');
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const latestSource = createdSources.at(-1);
+  const cancelBefore = cancelCount;
+  const spokenBefore = ttsBodies.length;
+  const promptsBefore = prompts.length;
+  container.querySelector('button[aria-label="Start listening"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.ok(captureNode?.port.onmessage, 'capture opens during playback');
+  assert.ok(!latestSource.stopped, 'opening capture is NOT itself an interruption');
+
+  // 400 ms of audio is sent once: no level-only stop and no onset replay.
+  for (let i = 0; i < 50; i += 1) captureNode.port.onmessage({ data: new Float32Array(128).fill(0.2) });
+  assert.equal(speechSocket.bytes, 12800);
+  assert.ok(!latestSource.stopped, 'loud audio alone does not interrupt');
+  speechSocket.receive({ type: 'stt', partial: true, text: '我' });
+  assert.ok(!latestSource.stopped, 'short own-voice echo is ignored');
+  speechSocket.receive({ type: 'stt', partial: true, text: '今天天气怎么样' });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.ok(latestSource.stopped, 'natural new words stop the playing source');
+  assert.equal(cancelCount, cancelBefore, 'partial speech does not cancel any agent');
+  assert.equal(prompts.length, promptsBefore, 'a partial is not submitted as a user turn');
+  eventSource.pushLive('这段旧播报不应该恢复。');
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(ttsBodies.length, spokenBefore, 'late old deltas cannot restart speech');
+}
+
+// A second pane never mounts an audio/composer engine and never steals Aura.
+{
+  const other = window.document.createElement('div');
+  container.after(other);
+  const second = createRoot(other);
+  second.render(React.createElement(pane.component, { sessionId: 'session-other', useSessionStatus: selector => selector(new Map()) }));
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(other.querySelector('[data-aura-instance]').dataset.auraInstance, 'busy');
+  assert.equal(other.querySelector('textarea'), null);
+  assert.equal(other.querySelector('button[aria-label="Start listening"]'), null);
+  second.unmount();
+}
+
+// Late final transcripts after a manual mic stop must not submit anything.
+{
+  const before = prompts.length;
+  container.querySelector('button[aria-label="Stop listening"]')?.click();
+  speechSocket.receive({ type: 'stt', text: '这条已经取消的识别不应提交' });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(prompts.length, before);
+  running = false; render();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  commandFailure = 'ordinary session busy';
+  setValue.call(textarea, '验证提交错误');
+  textarea.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await new Promise(resolve => setTimeout(resolve, 10));
+  container.querySelector('button[aria-label="Send"]').click();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(prompts.length, before, 'failed enable must never fall through to prompt');
+  assert.ok(beacons.some(e => e.stage === 'submit_error' && e.step === 'enable' && e.sessionId === 'session-test' && e.message === commandFailure));
+  commandFailure = null;
+}
+
+// Hang up while OS permission is pending: stop the late track, do not publish
+// an audio graph, do not re-arm the call or submit a stale final transcript.
+{
+  let release;
+  window.navigator.mediaDevices.getUserMedia = () => new Promise(resolve => { release = resolve; });
+  const before = prompts.length, contexts = contextCount;
+  container.querySelector('button[aria-label="Start call"]').click();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(typeof release, 'function');
+  assert.equal(JSON.parse(window.localStorage.getItem('dsh-aura.prefs')).mode, undefined, 'live calls are never persisted');
+  const oldSocket = speechSocket;
+  container.querySelector('button[aria-label="End call"]').click();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(oldSocket.readyState, 3, 'hangup closes pending speech socket before permission resolves');
+  let stopped = 0;
+  release({ getTracks: () => [{ stop() { stopped++; } }] });
+  oldSocket.receive({ type: 'stt', text: '迟到的权限回调不能发送命令' });
+  await new Promise(resolve => setTimeout(resolve, 450));
+  assert.equal(stopped, 1);
+  assert.equal(contextCount, contexts);
+  assert.equal(prompts.length, before);
+  assert.ok(container.querySelector('button[aria-label="Start call"]'));
+}
+
+// Runtime connection loss also fences permission and final-result callbacks.
+{
+  let release;
+  window.navigator.mediaDevices.getUserMedia = () => new Promise(resolve => { release = resolve; });
+  const before = prompts.length, contexts = contextCount;
+  container.querySelector('button[aria-label="Start listening"]').click();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const oldSocket = speechSocket;
+  controls.find(c => c.readyState === 1).close();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(container.querySelector('textarea'), null);
+  assert.equal(container.querySelector('[data-aura-instance]').dataset.auraInstance, 'error');
+  let stopped = 0;
+  release({ getTracks: () => [{ stop() { stopped++; } }] });
+  oldSocket.receive({ type: 'stt', text: '失联旧面板不应继续工作' });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(stopped, 1);
+  assert.equal(contextCount, contexts);
+  assert.equal(prompts.length, before);
+  container.querySelector('button').click();
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.ok(container.querySelector('button[aria-label="Start call"]'), 'explicit reopening starts with no call');
+  assert.equal(container.querySelector('button[aria-label="End call"]'), null);
+}
+
+// A fast first delta need not wait for running=true. Ownership loss must
+// close an unpublished AudioContext even while resume() itself is pending.
+{
+  let resume, pendingAudio;
+  window.AudioContext = class extends AudioContextStub {
+    constructor(options) { super(options); this.state = 'suspended'; pendingAudio = this; }
+    resume() { return new Promise(resolve => { resume = resolve; }); }
+    close() { this.closed = true; return Promise.resolve(); }
+  };
+  const currentInput = container.querySelector('textarea');
+  setValue.call(currentInput, '快速回答的播放权限测试');
+  currentInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await new Promise(resolve => setTimeout(resolve, 10));
+  container.querySelector('button[aria-label="Send"]').click();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const playedBefore = played.length;
+  eventSource.pushLive('先于运行状态抵达的第一句。');
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(typeof resume, 'function', 'the first new delta is not skipped waiting for running status');
+  controls.find(c => c.readyState === 1).close();
+  assert.ok(pendingAudio.closed, 'disconnect closes unpublished audio synchronously');
+  resume();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(played.length, playedBefore, 'late audio resume cannot publish or play after revocation');
 }
 
 root.unmount();

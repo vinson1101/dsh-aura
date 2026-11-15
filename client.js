@@ -12,13 +12,12 @@
  *
  * Geometry and palette derive from the Zebra desktop assistant's orb.
  */
-/* Declared before the loader runs: even the first beacon reads it, and a
- * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.33.0';
-
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
   factory(require) {
+    // Each replacement needs its own scope. A top-level const breaks the next
+    // classic-script load with a global lexical redeclaration error.
+    const AURA_VERSION = '0.35.0';
     diag('factory');
     /* A reload replaces this module but not the running audio graph: stop the
      * capture the previous instance left holding the microphone. */
@@ -49,66 +48,6 @@ window.__ModuleLoader__.load({
      * from outside the app, so each stage posts to the host's diagnostic route
      * and lands in $DSH_HOME/aura-diag.jsonl.
      */
-    /**
-     * Ask the host which version is installed and reload when it differs.
-     *
-     * Module scope on purpose: a crash inside the pane took the earlier
-     * watcher with it and left a broken page with no way to recover.
-     */
-    let watching = false;
-    function watchForNewVersion() {
-      if (watching || typeof window === 'undefined') return;
-      /* A test page has no host to ask, and an endless timer would stop the
-       * process from ever exiting. */
-      if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent || '')) return;
-      watching = true;
-      const tick = async () => {
-        try {
-          const response = await fetch('/aura/version', { cache: 'no-store' });
-          const payload = await response.json();
-          const installed = payload && payload.version;
-          if (installed && installed !== AURA_VERSION) {
-            /* Reload once per target version. The host serves the client bundle
-             * it read at startup, so if the reload comes back on the same
-             * version the bundle cannot be newer no matter how often we try —
-             * that is a plugin reload on the host side, not a page refresh. */
-            const KEY = 'dsh-aura.reloaded-for';
-            let attempted = '';
-            try {
-              attempted = window.sessionStorage.getItem(KEY) || '';
-            } catch {
-              /* private mode */
-            }
-            if (attempted === installed) {
-              diag('reload_blocked', { running: AURA_VERSION, installed });
-              window.dispatchEvent(
-                new window.CustomEvent('aura:stale-bundle', { detail: { running: AURA_VERSION, installed } }),
-              );
-              window.setTimeout(tick, 30000);
-              return;
-            }
-            try {
-              window.sessionStorage.setItem(KEY, installed);
-            } catch {
-              /* private mode: at most one attempt anyway */
-            }
-            diag('reload_for_version', { running: AURA_VERSION, installed });
-            window.location.reload();
-            return;
-          }
-          try {
-            window.sessionStorage.removeItem('dsh-aura.reloaded-for');
-          } catch {
-            /* ignore */
-          }
-        } catch {
-          /* the host is restarting; try again next tick */
-        }
-        window.setTimeout(tick, 5000);
-      };
-      window.setTimeout(tick, 4000);
-    }
-
     function diag(stage, extra) {
       const line = JSON.stringify({ stage, v: AURA_VERSION, at: Date.now(), ...extra });
       try {
@@ -253,9 +192,10 @@ window.__ModuleLoader__.load({
       const said = bare(spoken);
       if (!heard) return true;
       if (!said) return false;
-      /* Four characters of agreement is more than a coincidence. */
+      // Even a one-character prefix can be echo. Wait for words that differ
+      // rather than interrupting ourselves on the first short partial.
       const probe = heard.slice(-6);
-      return probe.length >= 4 && said.includes(probe);
+      return said.includes(probe);
     }
 
     function levelOfFrame(frame) {
@@ -277,36 +217,6 @@ window.__ModuleLoader__.load({
         sum += value * value;
       }
       return Math.sqrt(sum / samples.length);
-    }
-
-    /**
-     * Pearson correlation of two equal-length series, or 0 when either is flat.
-     * Used to ask whether the microphone is hearing the speaker (the envelopes
-     * move together) or a person (they do not).
-     */
-    function correlation(xs, ys) {
-      const count = Math.min(xs.length, ys.length);
-      if (count < 4) return 0;
-      let mx = 0;
-      let my = 0;
-      for (let index = 0; index < count; index += 1) {
-        mx += xs[index];
-        my += ys[index];
-      }
-      mx /= count;
-      my /= count;
-      let num = 0;
-      let dx = 0;
-      let dy = 0;
-      for (let index = 0; index < count; index += 1) {
-        const a = xs[index] - mx;
-        const b = ys[index] - my;
-        num += a * b;
-        dx += a * a;
-        dy += b * b;
-      }
-      if (dx < 1e-9 || dy < 1e-9) return 0;
-      return num / Math.sqrt(dx * dy);
     }
 
     function mountOrb(canvas, readState) {
@@ -454,19 +364,6 @@ window.__ModuleLoader__.load({
 
     /** How long a settled run keeps the presence green. */
     const SETTLED_MS = 3500;
-
-    /* Selectors run on every status snapshot, so they return primitives: an
-     * object would change identity each time and re-render the pane. */
-    function anyRunning(status) {
-      if (!status || typeof status.values !== 'function') return false;
-      for (const row of status.values()) if (row && row.running) return true;
-      return false;
-    }
-    function anyWaiting(status) {
-      if (!status || typeof status.values !== 'function') return false;
-      for (const row of status.values()) if (row && row.pendingInteraction) return true;
-      return false;
-    }
 
     /** The live session behind this pane, or null when it is not retained. */
     function bindSession(sessionId) {
@@ -685,7 +582,9 @@ registerProcessor('aura-capture', AuraCapture);`;
         return {
           voice: typeof parsed.voice === 'string' ? parsed.voice : VOICES[0].id,
           model: MODELS.some((item) => item.id === parsed.model) ? parsed.model : MODELS[0].id,
-          mode: MODES.some((item) => item.id === parsed.mode) ? parsed.mode : MODES[0].id,
+          // A call is live resource state, never a persisted preference.
+          // Ignore legacy mode:'chat': no microphone survives a remount/restart.
+          mode: 'talk',
           avatar: typeof parsed.avatar === 'string' ? parsed.avatar : '',
         };
       } catch {
@@ -695,7 +594,8 @@ registerProcessor('aura-capture', AuraCapture);`;
 
     function writePrefs(next) {
       try {
-        window.localStorage.setItem(PREF_KEY, JSON.stringify(next));
+        const { mode, ...preferences } = next;
+        window.localStorage.setItem(PREF_KEY, JSON.stringify(preferences));
       } catch {
         /* private mode: the choice simply does not persist */
       }
@@ -1173,12 +1073,86 @@ registerProcessor('aura-capture', AuraCapture);`;
       }
     }
 
+    /** The Host, not a page-global flag, owns the one runtime-wide Aura seat. */
+    function InstancePane(props) {
+      const [state, setState] = React.useState({ kind: 'opening' });
+      const [retry, setRetry] = React.useState(0);
+      React.useEffect(() => {
+        let disposed = false, socket = null, terminal = false;
+        let lastSeen = Date.now(), timeoutMs = 12000;
+        const listeners = new Set();
+        const access = {
+          token: '', revoked: true,
+          active: () => !disposed && !access.revoked && Date.now() - lastSeen < timeoutMs,
+          subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+          revoke() { access.revoked = true; for (const fn of listeners) fn(); },
+        };
+        const fail = message => {
+          access.revoke();
+          if (!disposed && !terminal) { terminal = true; setState({ kind: 'error', message }); }
+        };
+        setState({ kind: 'opening' });
+        void (async () => {
+          try {
+            if (!props.sessionId) throw new Error('请先选择一个会话。');
+            const origin = await hostOrigin();
+            if (disposed) return;
+            if (!origin) throw new Error('无法连接 Aura Host。');
+            socket = new WebSocket(`${origin.replace(/^http/, 'ws')}/aura/instance?sessionId=${encodeURIComponent(props.sessionId)}`);
+            socket.onmessage = event => {
+              if (disposed || terminal) return;
+              let message;
+              try { message = JSON.parse(String(event.data)); } catch { return; }
+              if (message.type === 'busy') {
+                terminal = true;
+                access.revoke();
+                diag('instance_busy', { sessionId: props.sessionId, owner: message.sessionId });
+                setState({ kind: 'busy', sessionId: message.sessionId });
+              } else if (message.type === 'owned') {
+                access.token = message.token;
+                access.revoked = false;
+                lastSeen = Date.now();
+                timeoutMs = message.timeoutMs || 12000;
+                diag('instance_owned', { sessionId: props.sessionId });
+                setState({ kind: 'owned', access });
+              } else if (message.type === 'heartbeat') lastSeen = Date.now();
+            };
+            socket.onerror = () => fail('Aura 连接失败，请重新打开。');
+            socket.onclose = () => fail('Aura 连接已断开，通话已结束。后台任务仍独立运行。');
+          } catch (error) { fail(String(error?.message || error)); }
+        })();
+        const timer = window.setInterval(() => {
+          if (disposed || terminal) return;
+          if (Date.now() - lastSeen >= timeoutMs) {
+            fail('Aura 连接超时，通话已结束。请重新打开。');
+            socket?.close();
+          } else if (socket?.readyState === 1) socket.send('heartbeat');
+        }, 1000);
+        return () => {
+          disposed = true;
+          access.revoke();
+          window.clearInterval(timer);
+          if (socket) { socket.onmessage = null; socket.onerror = null; socket.onclose = null; socket.close(); }
+        };
+      }, [props.sessionId, retry]);
+      if (state.kind === 'owned') return h(Pane, { ...props, access: state.access });
+      return h('div', { style: PANE, role: 'status', 'data-aura-instance': state.kind },
+        h('h3', null, 'Aura'),
+        h('p', null, state.kind === 'opening' ? '正在连接 Aura…' : state.kind === 'busy'
+          ? '此 runtime 已有一个 Aura 实例。请使用原面板；关闭原面板后，可在这里重新打开。'
+          : state.message),
+        state.kind !== 'opening' && h('button', { type: 'button', onClick: () => setRetry(n => n + 1) }, '重新打开'),
+        h('p', null, '一个 runtime，一个 Aura。跨会话任务独立执行。'));
+    }
+
     /** The tab body: one presence plus a composer that drives this session. */
     function Pane(props) {
       const form = FORMS[FORM] || FORMS.orb;
       const useStatus = props.useSessionStatus || (() => undefined);
-      const running = useStatus(anyRunning) === true;
-      const waiting = useStatus(anyWaiting) === true;
+      // This Hook exposes every session, including other windows and workers.
+      // Only this pane's identity may drive its reply completion and playback.
+      const running = useStatus(status => status?.get(props.sessionId)?.running === true) === true;
+      const waiting = useStatus(status => Boolean(status?.get(props.sessionId)?.pendingInteraction)) === true;
 
       const wasRunning = React.useRef(false);
       /* Mirrors the live status, because submitting happens outside the effect. */
@@ -1188,6 +1162,9 @@ registerProcessor('aura-capture', AuraCapture);`;
       /* Declared before the phase below reads it. */
       const [listening, setListening] = React.useState(false);
       const [error, setError] = React.useState(null);
+      React.useEffect(() => {
+        if (error) diag('pane_error', { sessionId: props.sessionId, message: String(error).slice(0, 600) });
+      }, [error, props.sessionId]);
       /* A continuous session is always "listening" at rest, so the phase needs
        * the mode before the preference state is declared. */
       const modeRef = React.useRef('talk');
@@ -1365,6 +1342,8 @@ registerProcessor('aura-capture', AuraCapture);`;
         };
       }, [panelOpen]);
       const captureRef = React.useRef(null);
+      const captureEpoch = React.useRef(0);
+      const pendingCapture = React.useRef(null);
 
       const choose = React.useCallback((next) => {
         const merged = { ...prefsRef.current, ...next };
@@ -1406,73 +1385,14 @@ registerProcessor('aura-capture', AuraCapture);`;
       );
       const partialRef = React.useRef({ text: '', at: 0 });
       const voiceRef = React.useRef(null);
-      /* capture.py: ControlGate. While the speaker is producing sound, the
-       * microphone hears it: drop those frames instead of transcribing an echo,
-       * and keep dropping for a moment after it stops, because the tail is
-       * still buffered in the input. */
+      // Playback state never gates microphone frames. The recognizer hears the
+      // continuous stream; transcript/echo comparison decides interruption.
       const gateRef = React.useRef({ active: false, until: 0 });
-      const gated = () => {
-        const gate = gateRef.current;
-        return gate.active || Date.now() < gate.until;
-      };
-      /* Barge-in needs the frames the gate is dropping, so they are measured
-       * here: a voice over the speaker for ~300 ms means "stop talking". */
-      /* Absolute levels are not stable: with the speaker loud, automatic gain
-       * control ducks the microphone and the same voice measures 0.03 instead
-       * of 0.3. The ratio to the room and to the echo is what holds, so the
-       * absolute value is only a sanity bound. */
-      /* The capture worklet posts 128 samples per call: 8 ms at 16 kHz. Every
-       * duration below is milliseconds and converted here, once. */
-      const FRAME_MS = 8;
-      const framesFor = (ms) => Math.max(1, Math.round(ms / FRAME_MS));
-      const BARGE_LEVEL = 0.02;
-      /* Two frames is an onset: enough to tell speech from a click and short
-       * enough to stop the voice while the first word is still being said. The
-       * board's AFE uses a 128 ms onset delay for the same reason. */
-      /* 200 ms of onset: a syllable, not a click. */
-      const BARGE_FRAMES = framesFor(200);
-      /* Playback needs a moment to settle before it can be talked over. */
-      const BARGE_GUARD_MS = 400;
-      /* The head of an interrupted sentence lives in this window. */
-      const HEAD_MS = 800;
-      const HEAD_FRAMES = framesFor(HEAD_MS);
-      /* Enough history to see a syllable move. */
-      const ENVELOPE_MS = 1000;
-      const ENVELOPE_FRAMES = framesFor(ENVELOPE_MS);
-      /* Both maxima are reported: an open gate shows what the microphone
-       * actually hears, a closed one shows what echo cancellation leaves. */
-      const bargeRef = React.useRef({
-        streak: 0,
-        frames: [],
-        floor: null,
-        probe: 0,
-        probeAt: 0,
-        all: 0,
-        gatedMax: 0,
-        micHist: [],
-        playHist: [],
-      });
       const levelRef = React.useRef(0);
-      /* Survives a reload: shipping a new bundle reloads the page mid-run, and
-       * the reply of that run must still be spoken by the new instance. */
-      const SPEAK_KEY = 'dsh-aura.speak-next';
-      const readArmed = () => {
-        try {
-          return window.sessionStorage.getItem(SPEAK_KEY) === '1';
-        } catch {
-          return false;
-        }
-      };
-      const armSpeak = (armed) => {
-        speakNext.current = armed;
-        try {
-          if (armed) window.sessionStorage.setItem(SPEAK_KEY, '1');
-          else window.sessionStorage.removeItem(SPEAK_KEY);
-        } catch {
-          /* private mode still works within this page */
-        }
-      };
-      const speakNext = React.useRef(readArmed());
+      // Playback intent belongs to this live instance, not browser storage.
+      // Remounting or restarting must never replay a different/obsolete turn.
+      const speakNext = React.useRef(false);
+      const armSpeak = (armed) => { speakNext.current = armed; };
       const speakArmedRef = speakNext;
       /* The window still shows the previous reply for a moment after a run
        * ends, so the text from before this turn is captured and the new one is
@@ -1558,7 +1478,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             diag('speak_skipped', { chars: String(text || '').length });
             return;
           }
-          if (generation !== speakGeneration.current) return;
+          if (!props.access.active() || generation !== speakGeneration.current) return;
           if (speechGagged()) {
             diag('speak_gagged', { chars: spoken.length, run: runSeqRef.current });
             return;
@@ -1571,7 +1491,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             const response = await fetch('/aura/tts', {
               method: 'POST',
               signal: controller.signal,
-              headers: { 'content-type': 'application/json' },
+              headers: { 'content-type': 'application/json', 'x-aura-instance': props.access.token },
               body: JSON.stringify({
                 text: spoken.slice(0, 2000),
                 voice: voice || prefsRef.current.voice,
@@ -1583,7 +1503,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               throw new Error(failure.error || 'speech synthesis failed');
             }
 
-            if (generation !== speakGeneration.current) return;
+            if (!props.access.active() || generation !== speakGeneration.current) return;
             const rate = Number(response.headers.get('x-aura-sample-rate')) || SAMPLE_RATE;
             const AudioCtor = window.AudioContext || window.webkitAudioContext;
             if (!AudioCtor) throw new Error('This browser exposes no Web Audio.');
@@ -1592,11 +1512,21 @@ registerProcessor('aura-capture', AuraCapture);`;
              * where the last ended instead of cutting it off. */
             const audio = existing ? existing.audio : new AudioCtor({ sampleRate: rate });
             if (audio.state === 'suspended') {
+              // This context is not yet published in voiceRef. Revoke it even
+              // while resume() waits for an OS/browser audio permission.
+              const unsubscribe = props.access.subscribe(() => { if (!existing) void audio.close(); });
               try {
                 await audio.resume();
               } catch {
                 /* reported by the beacon below */
+              } finally {
+                unsubscribe();
               }
+            }
+            if (!props.access.active() || generation !== speakGeneration.current || speechGagged()) {
+              if (!existing) void audio.close();
+              void response.body?.cancel?.();
+              return;
             }
 
             const analyser = existing ? existing.analyser : audio.createAnalyser();
@@ -1622,7 +1552,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             /* Play each slice as it lands: the first audio starts as soon as the
              * provider produces it, instead of after the whole reply exists. */
             const schedule = (samples) => {
-              if (samples.length === 0 || voiceRef.current !== playback) return;
+              if (!props.access.active() || samples.length === 0 || voiceRef.current !== playback) return;
               const buffer = audio.createBuffer(1, samples.length, rate);
               buffer.copyToChannel(samples, 0);
               const source = audio.createBufferSource();
@@ -1651,10 +1581,6 @@ registerProcessor('aura-capture', AuraCapture);`;
             };
 
             voiceRef.current = playback;
-            bargeRef.current.startedAt = Date.now();
-            bargeRef.current.streak = 0;
-            bargeRef.current.echo = null;
-            bargeRef.current.interruptedAt = -1;
             playback.pending += 1;
             window.clearTimeout(playback.finishTimer);
             gateRef.current.active = true;
@@ -1666,7 +1592,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             let carry = new Uint8Array(0);
             let chunks = 0;
             for (;;) {
-              if (speechGagged() || generation !== speakGeneration.current) {
+              if (speechGagged() || !props.access.active() || generation !== speakGeneration.current) {
                 try {
                   await reader.cancel();
                 } catch {
@@ -1695,6 +1621,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             playback.pending = Math.max(0, playback.pending - 1);
             diag('tts_ok', { chunks, pending: playback.pending });
           } catch (failure) {
+            if (!props.access.active() || generation !== speakGeneration.current) return;
             const cancelled = failure && (failure.name === 'AbortError' || /aborted/i.test(String(failure.message)));
             if (cancelled) {
               diag('tts_cancelled');
@@ -1720,7 +1647,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         [speakNow],
       );
 
-      React.useEffect(() => () => stopSpeaking(), [stopSpeaking]);
+
 
       /* ---- speaking while the answer is still arriving ------------------- */
 
@@ -1757,15 +1684,18 @@ registerProcessor('aura-capture', AuraCapture);`;
         [speak],
       );
 
-      /* Subscribe to the live tokens while a run we started is in flight. */
+      /* Observe this session continuously; arming gates playback. A fast first
+       * delta can arrive before the separate running-status notification. */
       React.useEffect(() => {
-        if (!running) return undefined;
         const sessions = services && services.get ? services.get('sessions') : null;
         const binding = sessions && typeof sessions.binding === 'function' ? sessions.binding(props.sessionId) : null;
         const source = binding && binding.eventSource;
         if (!source || typeof source.subscribe !== 'function') return undefined;
 
-        let seen = -1;
+        let seen = 0;
+        for (const entry of source.getSnapshot?.().entries || []) {
+          if (entry.event?.type === 'assistant/live-chunk') seen = Math.max(seen, entry.event.seq || 0);
+        }
         const onSnapshot = () => {
           const snapshot = typeof source.getSnapshot === 'function' ? source.getSnapshot() : null;
           const entries = (snapshot && snapshot.entries) || [];
@@ -1773,11 +1703,6 @@ registerProcessor('aura-capture', AuraCapture);`;
             const event = entry && entry.event;
             if (!event || event.type !== 'assistant/live-chunk') continue;
             const seq = typeof event.seq === 'number' ? event.seq : 0;
-            if (seen === -1) {
-              /* Skip everything that predates this subscription. */
-              seen = Math.max(seen, seq);
-              continue;
-            }
             if (seq <= seen) continue;
             seen = seq;
             const chunk = event.data && event.data.chunk;
@@ -1785,22 +1710,15 @@ registerProcessor('aura-capture', AuraCapture);`;
               appendSpeech(chunk.text);
             }
           }
-          if (seen === -1) seen = 0;
         };
         const unsubscribe = source.subscribe(onSnapshot);
         onSnapshot();
         return () => {
           if (typeof unsubscribe === 'function') unsubscribe();
         };
-      }, [running, appendSpeech, props.sessionId]);
+      }, [appendSpeech, props.sessionId]);
 
-      /**
-       * The app has no reload shortcut, so a page can run an old bundle with no
-       * way out. Ask the host which version is installed and reload when it
-       * differs — the alternative is what happened here: hours of changes that
-       * never ran.
-       */
-      /* The version probe lives at module scope now: see watchForNewVersion. */
+      /** Settle only this foreground turn; independent workers may remain busy. */
       React.useEffect(() => {
         diag('run_watch', { running, was: wasRunning.current, wants: speakNext.current });
         if (running && !wasRunning.current) {
@@ -1844,8 +1762,10 @@ registerProcessor('aura-capture', AuraCapture);`;
              * flips to idle, and speaking the previous reply is worse. */
             const baseline = replyBefore.current;
             const watched = props.sessionId;
+            const watchedRun = runSeqRef.current;
             let attempts = 0;
             const take = () => {
+              if (!props.access.active() || runSeqRef.current !== watchedRun || speechGagged()) return;
               const text = lastAssistantText(watched);
               const fresh = Boolean(text) && text !== baseline;
               diag('reply_ready', { chars: text.length, fresh, attempt: attempts });
@@ -1865,9 +1785,9 @@ registerProcessor('aura-capture', AuraCapture);`;
 
       /** Send one message into the session this pane belongs to. */
       const submitText = React.useCallback(
-        async (text) => {
+        async (text, stillCurrent = () => true) => {
           const trimmed = String(text || '').trim();
-          if (!trimmed) return false;
+          if (!trimmed || !props.access.active() || !stillCurrent()) return false;
           const session = bindSession(props.sessionId);
           if (!session) {
             setError('No live session for this pane.');
@@ -1875,34 +1795,41 @@ registerProcessor('aura-capture', AuraCapture);`;
           }
           setBusy(true);
           setError(null);
+          let step = 'enable';
           try {
-            /* While a turn is running, a voice input is an interruption, not a
-             * message to read after it. */
-            /* Interrupting replaces the conversation at once: the new words
-             * are the new input, not something queued behind the old turn.
-             * Keeping a background task alive across that is the host's
-             * business, not this pane's. */
-            /* Speaking always stops the voice. Waiting for a barge-in
-             * decision here is what let the old answer keep playing under the
-             * new turn. */
             if (runningRef.current) gaggedRef.current = runSeqRef.current;
             stopSpeaking();
-            const mode = runningRef.current ? 'steer' : 'queue';
-            diag('submit_mode', { mode });
-            const result = await session.prompt([{ type: 'text', text: trimmed }], mode);
-            if (result && result.ok === false) {
-              setError((result.error && result.error.message) || 'The session refused the message.');
-              return false;
-            }
+            // Native authenticated commands scope the foreground and cancel only
+            // its obsolete turn. Published managed tasks have separate owners.
+            const command = async line => {
+              const reply = await services.remote.commands.execute(props.sessionId, line, []);
+              if (!reply.ok || reply.value?.result?.kind !== 'success') {
+                throw new Error(reply.value?.result?.text || reply.error?.message || 'Aura foreground unavailable.');
+              }
+            };
+            await command('/aura on');
+            if (!props.access.active() || !stillCurrent()) return false;
+            step = 'interrupt';
+            if (runningRef.current) await command('/aura interrupt');
+            if (!props.access.active() || !stillCurrent()) return false;
+            step = 'prompt';
+            const mode = 'queue';
+            // Arm BEFORE publication: a fast answer may arrive before the RPC
+            // acknowledges the prompt. Never use that new answer as baseline.
             replyBefore.current = lastAssistantText(props.sessionId);
-            /* A new message is a request to be heard again; only the run that
-             * was interrupted stays silent. */
             gaggedRef.current = -1;
             armSpeak(true);
-            diag('speak_armed', { chars: trimmed.length, before: replyBefore.current.length });
+            diag('submit_mode', { sessionId: props.sessionId, mode });
+            const result = await session.prompt([{ type: 'text', text: trimmed }], mode);
+            if (result && result.ok === false) throw new Error(result.error?.message || 'The session refused the message.');
+            if (!props.access.active() || !stillCurrent()) return false;
+            diag('speak_armed', { sessionId: props.sessionId, chars: trimmed.length, before: replyBefore.current.length });
             return true;
           } catch (failure) {
-            setError(String((failure && failure.message) || failure));
+            armSpeak(false);
+            const message = String(failure?.message || failure);
+            diag('submit_error', { sessionId: props.sessionId, step, message: message.slice(0, 600) });
+            if (props.access.active()) setError(message);
             return false;
           } finally {
             setBusy(false);
@@ -1947,6 +1874,16 @@ registerProcessor('aura-capture', AuraCapture);`;
       /** Release the microphone and every node the capture created. */
       /** Tear down the microphone, the live socket and the meter. */
       const stopCapture = React.useCallback(() => {
+        captureEpoch.current += 1; // Invalidate pending permission/ASR callbacks, too.
+        openingRef.current = false;
+        const pending = pendingCapture.current;
+        pendingCapture.current = null;
+        if (pending) {
+          try { pending.socket?.close(); } catch {}
+          for (const track of pending.stream?.getTracks() || []) track.stop();
+          if (pending.audio) void pending.audio.close();
+          pending.release?.({ text: '' });
+        }
         const capture = captureRef.current;
         captureRef.current = null;
         liveCapture.current = null;
@@ -1964,6 +1901,7 @@ registerProcessor('aura-capture', AuraCapture);`;
           return;
         }
         diag('mic_stop', { id: capture.id });
+        capture.release?.({ text: '' });
         try {
           capture.node.port.onmessage = null;
           capture.source.disconnect();
@@ -1992,7 +1930,15 @@ registerProcessor('aura-capture', AuraCapture);`;
         }
       }, []);
 
-      React.useEffect(() => () => stopCapture(), [stopCapture]);
+      React.useEffect(() => {
+        const deactivate = () => {
+          armSpeak(false);
+          stopCapture();
+          stopSpeaking();
+        };
+        const unsubscribe = props.access.subscribe(deactivate);
+        return () => { unsubscribe(); deactivate(); };
+      }, [props.access, stopCapture, stopSpeaking]);
 
       /**
        * One live turn over the bridge's control frames: hello, listen start,
@@ -2005,34 +1951,39 @@ registerProcessor('aura-capture', AuraCapture);`;
       const openingRef = React.useRef(false);
 
       const startCapture = React.useCallback(async () => {
+        if (!props.access.active()) return;
         /* Opening is asynchronous; without this guard a second call slips in
          * before the first has a stream, and two captures fight for the device. */
         if (liveCapture.current || liveCapture.opening) {
           diag('mic_busy', { live: liveCapture.current ? liveCapture.current.id : 'opening' });
           return;
         }
-        liveCapture.opening = true;
         if (openingRef.current || captureRef.current) {
           diag('mic_ignored', { opening: openingRef.current, open: Boolean(captureRef.current) });
           return;
         }
+        const attempt = ++captureEpoch.current;
+        const current = () => props.access.active() && captureEpoch.current === attempt;
+        let openedStream = null, openedAudio = null;
+        liveCapture.opening = true;
         openingRef.current = true;
         captureRef.current = null;
         setError(null);
         setHeard('');
         partialRef.current = { text: '', at: 0 };
-        /* Talking over the answer is a request to stop hearing it. */
-        if (voiceRef.current) {
-          stopSpeaking();
-          gateRef.current.until = 0;
-        }
-        const turn = { socket: null, release: null, started: false };
+        const turn = {
+          socket: null, release: null, started: false,
+          heardPlayback: Boolean(voiceRef.current), userSpeech: false,
+        };
+        pendingCapture.current = turn;
 
         const finishTurn = (reason) => {
+          if (!current()) return;
           diag('turn_finish', { reason });
           /* The clock starts here: waiting for the transcript after "stop" is
            * what can hang, not the length of the utterance. */
-          window.setTimeout(() => {
+          window.clearTimeout(turn.timer);
+          turn.timer = window.setTimeout(() => {
             if (turn.release) turn.release({ error: 'the recognizer did not answer' });
           }, 10000);
           try {
@@ -2051,13 +2002,15 @@ registerProcessor('aura-capture', AuraCapture);`;
           if (!AudioCtor) throw new Error('This browser exposes no Web Audio.');
 
           const origin = await hostOrigin();
+          if (!current()) return;
           if (!origin) throw new Error('Cannot reach the host to open the speech socket.');
-          const socket = new WebSocket(`${origin.replace(/^http/, 'ws')}/aura/asr/live`);
+          const socket = new WebSocket(`${origin.replace(/^http/, 'ws')}/aura/asr/live?instance=${encodeURIComponent(props.access.token)}`);
           turn.socket = socket;
 
           const finalText = new Promise((resolve) => {
-            turn.release = resolve;
+            turn.release = result => { window.clearTimeout(turn.timer); resolve(result); };
             socket.onmessage = (event) => {
+              if (!current()) return;
               let message;
               try {
                 message = JSON.parse(String(event.data));
@@ -2079,7 +2032,10 @@ registerProcessor('aura-capture', AuraCapture);`;
                   setHeard(text);
                   /* Somebody is saying something we are not: that is an
                    * interruption, and the recognizer is the authority. */
-                  if (voiceRef.current && !fromOurVoice(text, spokenRef.current)) {
+                  const echo = fromOurVoice(text, spokenRef.current);
+                  if (voiceRef.current) turn.heardPlayback = true;
+                  if (text.trim() && !echo) turn.userSpeech = true;
+                  if (voiceRef.current && !echo) {
                     diag('barge_heard', { chars: text.length });
                     gaggedRef.current = runSeqRef.current;
                     stopSpeaking({ echoTail: false });
@@ -2088,7 +2044,10 @@ registerProcessor('aura-capture', AuraCapture);`;
                   }
                   return;
                 }
-                turn.release({ text });
+                // Do not turn the assistant's own completed speech into a
+                // fresh user message, even if playback ended before the final.
+                const echoOnly = turn.heardPlayback && !turn.userSpeech && fromOurVoice(text, spokenRef.current);
+                turn.release({ text: echoOnly ? '' : text });
                 return;
               }
               if (message.type === 'error') {
@@ -2096,6 +2055,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               }
             };
             socket.onopen = () => {
+              if (!current()) { socket.close(); return; }
               socket.send(
                 JSON.stringify({
                   type: 'hello',
@@ -2104,6 +2064,7 @@ registerProcessor('aura-capture', AuraCapture);`;
                 }),
               );
             };
+            socket.onclose = () => turn.release({ error: 'the speech socket closed' });
             socket.onerror = () => {
               diag('live_error', { phase: 'socket' });
               turn.release({ error: 'the speech socket failed' });
@@ -2127,13 +2088,22 @@ registerProcessor('aura-capture', AuraCapture);`;
               autoGainControl: useAec,
             },
           });
+          openedStream = stream;
+          turn.stream = stream;
+          if (!current()) { for (const track of stream.getTracks()) track.stop(); socket.close(); return; }
           diag('mic_constraints', { aec: useAec });
           const audio = new AudioCtor({ sampleRate: SAMPLE_RATE });
+          openedAudio = audio;
+          turn.audio = audio;
           const url = URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: 'application/javascript' }));
           try {
             await audio.audioWorklet.addModule(url);
           } finally {
             URL.revokeObjectURL(url);
+          }
+          if (!current()) {
+            for (const track of stream.getTracks()) track.stop();
+            void audio.close(); socket.close(); return;
           }
           const source = audio.createMediaStreamSource(stream);
           const node = new AudioWorkletNode(audio, 'aura-capture');
@@ -2177,6 +2147,8 @@ registerProcessor('aura-capture', AuraCapture);`;
           });
 
           void finalText.then(async (result) => {
+            if (!current()) return;
+            let accepted = !result.error;
             if (result.error) {
               diag('live_final_error', { error: String(result.error).slice(0, 160) });
               setError(String(result.error));
@@ -2185,15 +2157,18 @@ registerProcessor('aura-capture', AuraCapture);`;
               diag('asr', { chars: text.length, empty: text.length === 0, preview: text.slice(0, 40) });
               if (text) {
                 setHeard(text);
-                await submitText(text);
+                accepted = await submitText(text, current);
               }
             }
+            if (!current()) return;
+            if (!accepted) choose({ mode: 'talk' });
             stopCapture();
+            const stoppedEpoch = captureEpoch.current;
             /* Continuous mode: after the answer there is no "press to speak"
              * again; the microphone returns by itself. */
             if (prefsRef.current.mode === 'chat') {
               window.setTimeout(() => {
-                if (!captureRef.current) void startCaptureRef.current();
+                if (props.access.active() && captureEpoch.current === stoppedEpoch && prefsRef.current.mode === 'chat' && !captureRef.current) void startCaptureRef.current();
               }, 400);
             }
           });
@@ -2217,97 +2192,14 @@ registerProcessor('aura-capture', AuraCapture);`;
             }
             flushHandshake();
 
-            const state = bargeRef.current;
-            const level = levelOfFrame(event.data);
-            const playing = gated();
-            const settled = Date.now() - (state.startedAt || 0) > BARGE_GUARD_MS;
-
-            if (playing) {
-              /* The recognizer hears the answer too; its words are filtered by
-               * comparison with what we are saying, not by level. */
-              vad.push(event.data);
-              /* A short ring of what the gate is about to swallow: the head of
-               * a sentence lives here, and the confirm takes three frames. */
-              const ring = state.headFrames || (state.headFrames = []);
-              ring.push({ frame: event.data, level });
-              if (ring.length > HEAD_FRAMES) ring.shift();
-              /* Echo is only meaningful while the player is making sound. */
-              state.echo = state.echo === null || state.echo === undefined
-                ? level
-                : state.echo * 0.9 + level * 0.1;
-              state.micHist.push(level);
-              state.playHist.push(levelRef.current || 0);
-              if (state.micHist.length > ENVELOPE_FRAMES) state.micHist.shift();
-              if (state.playHist.length > ENVELOPE_FRAMES) state.playHist.shift();
-
-              const threshold = Math.max(BARGE_LEVEL, (state.floor || 0) * 6, (state.echo || 0) * 2);
-              const follows = correlation(state.micHist, state.playHist);
-              const echoLike = follows > 0.8;
-              /* Syllables make the envelope uneven; a steady noise does not.
-               * A knock is loud for one frame and flat across the others. */
-              const window = state.micHist.slice(-framesFor(300));
-              const mean = window.length ? window.reduce((sum, value) => sum + value, 0) / window.length : 0;
-              const spread = mean > 0.001 ? Math.max(...window) / mean : 1;
-              const speechShaped = window.length >= 3 && spread > 1.6;
-              const needed = echoLike ? threshold * 2 : threshold;
-              state.streak = settled && level > needed && speechShaped ? state.streak + 1 : 0;
-
-              if (Date.now() - state.probeAt > 3000) {
-                diag('mic_level', {
-                  level: Number(level.toFixed(3)),
-                  echo: Number((state.echo || 0).toFixed(3)),
-                  corr: Number(follows.toFixed(2)),
-                  spread: Number(spread.toFixed(2)),
-                  threshold: Number(needed.toFixed(3)),
-                  track: (() => {
-                    const stream = captureRef.current && captureRef.current.stream;
-                    const track = stream ? stream.getAudioTracks()[0] : null;
-                    return track ? track.readyState + (track.muted ? "/muted" : "/live") : "none";
-                  })(),
-                });
-                state.probeAt = Date.now();
-              }
-
-              const cooled =
-                state.lastBargeAt === undefined || Date.now() - state.lastBargeAt > 1200;
-              if (state.streak >= BARGE_FRAMES && cooled) {
-                state.lastBargeAt = Date.now();
-                state.streak = 0;
-                diag('barge_in', {
-                  level: Number(level.toFixed(3)),
-                  echo: Number((state.echo || 0).toFixed(3)),
-                  corr: Number(follows.toFixed(2)),
-                  needed: Number(needed.toFixed(3)),
-                });
-                gateRef.current.active = false;
-                gateRef.current.until = 0;
-                gaggedRef.current = runSeqRef.current;
-                /* Keep the microphone open: the user is mid-sentence. */
-                stopSpeaking({ echoTail: false });
-                /* The head: only the frames that clearly beat the echo, oldest
-                 * first, and only once — the stream continues from here. */
-                const head = (state.headFrames || []).slice(-HEAD_FRAMES);
-                for (const entry of head) vad.push(entry.frame);
-                diag('head_replayed', { frames: head.length });
-                state.headFrames = [];
-                /* Nothing is replayed: the reference is explicit that a
-                 * retrospective cache repeats onset samples. The first syllable
-                 * of an interruption may be lost; a duplicated one is worse. */
-              }
-              state.gatedMax = Math.max(state.gatedMax || 0, level);
-              return;
-            }
-
-            if (state.headFrames) state.headFrames = [];
-            if (state.floor === null) state.floor = level;
-            else if (level < state.floor) state.floor = state.floor * 0.7 + level * 0.3;
-            else state.floor = state.floor * 0.995 + level * 0.005;
-            state.streak = 0;
+            // Feed every frame exactly once, including during playback. Never
+            // replay a cached head: those samples are already in the ASR stream.
             vad.push(event.data);
           };
           liveCapture.seq += 1;
           const id = liveCapture.seq;
-          const record = { id, stream, audio, source, node, sink, vad, socket };
+          const record = { id, stream, audio, source, node, sink, vad, socket, release: turn.release };
+          if (pendingCapture.current === turn) pendingCapture.current = null;
           liveCapture.current = record;
           try {
             window.__auraCapture = record;
@@ -2320,8 +2212,13 @@ registerProcessor('aura-capture', AuraCapture);`;
           setListening(true);
           diag('mic_start', { rate: audio.sampleRate, id });
         } catch (failure) {
+          if (pendingCapture.current === turn) pendingCapture.current = null;
+          for (const track of openedStream?.getTracks() || []) track.stop();
+          if (openedAudio) void openedAudio.close();
+          if (captureEpoch.current !== attempt || !props.access.active()) { turn.socket?.close(); return; }
           openingRef.current = false;
           liveCapture.opening = false;
+          choose({ mode: 'talk' });
           diag('mic_error', { message: String((failure && failure.message) || failure).slice(0, 160) });
           setError(String((failure && failure.message) || failure));
           try {
@@ -2347,7 +2244,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       const toggleCall = React.useCallback(() => {
         if (callActive) {
           choose({ mode: 'talk' });
-          if (captureRef.current) stopCapture();
+          stopCapture();
           gaggedRef.current = runSeqRef.current;
           stopSpeaking();
         } else {
@@ -2547,8 +2444,8 @@ registerProcessor('aura-capture', AuraCapture);`;
           : null,
         h(
           'div',
-          { style: STAGE, role: 'img', 'aria-label': `Aura ${phase}` },
-          h('canvas', { ref: canvasRef, style: CANVAS }),
+          { style: STAGE, role: 'group', 'aria-label': `Aura ${phase}` },
+          h('canvas', { ref: canvasRef, style: CANVAS, 'aria-hidden': true }),
           h(
             'button',
             {
@@ -2630,13 +2527,15 @@ registerProcessor('aura-capture', AuraCapture);`;
                 )
               : null,
           ),
-          error ? h('div', { style: ERROR }, error) : null,
+          h('div', { className: 'aura-id-mono', style: { whiteSpace: 'normal', lineHeight: 1.5 } },
+            '简单问题直接答，任务独立执行。插话或挂断不停止任务；普通模式：/aura off。'),
+          error ? h('div', { style: ERROR, role: 'alert' }, error) : null,
         ),
       );
     }
 
     /** Slot entry: the boundary keeps a crash visible instead of blank. */
-    const AuraPane = (props) => h(Boundary, null, h(Pane, props));
+    const AuraPane = (props) => h(Boundary, null, h(InstancePane, { ...props, key: props.sessionId }));
 
     /** The tab chip's title. */
     function TabTitle() {
@@ -2780,12 +2679,11 @@ registerProcessor('aura-capture', AuraCapture);`;
       );
 
     return {
-      inject: ['slots'],
+      inject: ['slots', 'remote', 'remote.commands'],
       apply(ctx) {
         diag('apply');
-        /* Before anything can throw: the recovery probe must not depend on the
-         * pane rendering successfully. */
-        watchForNewVersion();
+        // The Host owns module replacement. Never force a whole-app refresh
+        // from an Aura timer: it can discard unrelated transient UI state.
         services = ctx;
         /* Filled by the tab registration so the header button can open it. */
         let open = null;
@@ -2812,7 +2710,7 @@ registerProcessor('aura-capture', AuraCapture);`;
                     id: TAB_ID,
                     order: 40,
                     title: () => 'Aura',
-                    description: () => 'The agent’s current activity as a particle sphere.',
+                    description: () => 'Voice conversation with independent tasks; interrupt speech without stopping work.',
                     icon: Orbit,
                   },
                 ],

@@ -1,54 +1,54 @@
 # Aura
 
-A presence pinned to the right edge of the DeepSeek Harness Web UI, showing what
-the agent is doing. Its first form is a breathing particle sphere: pure canvas,
-1900 points on a golden-angle sphere, six depth bands, a radial glow and a
-rotation you can read at a glance.
+Aura lives beside the real DeepSeek Harness conversation. The right sidebar
+handles voice; the middle column remains your conversation and work history.
+Its breathing particle orb is one replaceable visualization, not the product.
 
-A form is only a renderer. Live2D, a digital human or a text pill can replace the
-sphere without changing what the presence reports.
+## Talk while work continues
 
-## What it does
+Simple questions are answered directly. Actual work is dispatched to independent
+native managed workers, which report progress and results to the foreground.
+Speaking naturally stops obsolete playback and replaces only the foreground
+answer; already-dispatched tasks keep running. No interruption keywords are needed.
 
-The orb mirrors the session phase it reads from the Web UI:
+The microphone stays open during playback. Echo-only recognition is ignored, while
+differing speech stops playback. Muting or hanging up never cancels a worker.
+To interrupt work, explicitly name the task. An interrupt stops that worker's
+current execution, not all independent descendants or queued work.
 
-- **Blue (`idle`)** — nothing is running. Slow turn, slow breathing.
-- **Violet (`running`)** — at least one session is working. The sphere spins almost
-  twice as fast and breathes three times as fast, so a glance tells you the agent
-  is busy.
-- **Coral (`waiting`)** — a session is blocked on you: a question or an approval.
-- **Green (`done`)** — a run settled in the last 3.5 seconds, then it falls back to
-  blue.
+## One runtime, one Aura
 
-Hovering grows the orb. Dragging, clicking through, or occluding the UI is not
-possible: the orb sits in the frame-wide overlay layer, which is click-through
-except for the orb itself.
+One Host-owned instance is shared across windows and sessions, bound to one
+foreground conversation. Other panes show an existing-instance notice instead of
+opening a second microphone or player. Close the original pane, then explicitly
+reopen the other one; there is no automatic takeover. Cross-session work remains
+independently managed.
 
-## Behaviour worth knowing
+Closing the pane or losing its connection releases voice resources, not workers.
+Restarting resets the call button and pending playback; it never automatically
+opens the microphone. Voice, model and avatar preferences are retained.
 
-- **Reduced motion.** With `prefers-reduced-motion: reduce` the orb draws one frame
-  and stops animating, but still repaints whenever the phase changes, so the colour
-  stays truthful.
-- **Hidden tab.** The animation loop stops while the page is hidden and resumes when
-  it returns.
-- **Disposal.** Unloading the plugin cancels the frame, disconnects the resize
-  observer and removes both listeners, so nothing keeps painting a detached canvas.
+## Getting started
 
-## The composer
+Open the **Aura** right-sidebar tab from the session header. Type, click the
+microphone, or start a call. Enter sends; Shift+Enter inserts a newline. Replies
+remain in the middle column and can be spoken as sentences arrive. Failures appear
+inline instead of silently dropping input.
 
-Below the sphere is one text box. Enter sends its contents into the session this
-tab belongs to — the same session shown in the middle column — and Shift+Enter
-inserts a newline. While that session runs, a stop control appears and cancels
-the run. Failures show inline instead of disappearing.
+The first sidebar submission enables foreground mode for the session, including
+middle-column input. Use `/aura off` in the middle-column command input to return
+to ordinary in-session execution. Sidebar submission enables it again.
+`/aura interrupt` stops only the foreground and preserves queued input. An ordinary
+session already doing work cannot be converted until idle; use a new session if
+needed. Successful mode changes survive resume and plugin reload.
 
-## Not in this version
-
-- No microphone and no speech: the composer is typed input only.
-- The sphere's colour reflects **any** running session, not only this tab's.
-- The sphere is the only form; there is no form switcher yet.
-- There is no settings page; the layout is fixed.
+The orb reports session/foreground activity, not aggregate task progress. An idle
+foreground can have busy workers; ask for status or use the native agent view.
+Reduced-motion mode avoids continuous animation, and hidden tabs pause painting.
 
 ## Requirements
 
-DeepSeek Harness `>=0.2.2-rc.1 <0.3.0-0` on the Web UI. A browser with canvas 2D
-and `ResizeObserver` — every current browser qualifies.
+DeepSeek Harness `>=0.2.2-rc.3 <0.3.0-0`, its Web UI, a current browser with microphone
+permission, and a Bailian/DashScope key for voice. Credentials remain on the host;
+no provider key reaches the browser. See the repository README for configuration
+and verification limits.

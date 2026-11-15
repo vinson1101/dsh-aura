@@ -1,7 +1,7 @@
 {
   "name": "dsh-aura",
-  "version": "0.33.0",
-  "description": "A living particle orb for DeepSeek Harness: a breathing sphere pinned to the Web UI that turns faster while a session runs and takes a colour per phase.",
+  "version": "0.35.0",
+  "description": "A voice companion for DeepSeek Harness: responsive conversation and independently managed tasks, with natural interruption that leaves work running.",
   "license": "MIT",
   "author": "vinson1101",
   "type": "module",
@@ -16,7 +16,7 @@
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0",
-    "dsh": ">=0.2.2-rc.1 <0.3.0-0"
+    "dsh": ">=0.2.2-rc.3 <0.3.0-0"
   },
   "exports": {
     ".": "./index.js",
@@ -28,6 +28,8 @@
     "index.js",
     "asr.js",
     "tts.js",
+    "tasks.js",
+    "instance.js",
     "secrets.js",
     "client.js",
     "cordis.patch.yml",
@@ -41,7 +43,11 @@
     },
     "client": {
       "platform": "web",
-      "immediately": true
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-ui-renderer"
+      ]
     }
   },
   "keywords": [
@@ -60,7 +66,7 @@
     "react-dom": "^18.3.1"
   },
   "scripts": {
-    "test": "node test/secrets.test.mjs && node test/asr.test.mjs && node test/paraformer.test.mjs && node test/live.test.mjs && node test/tts.test.mjs && node test/pane.test.mjs && node test/mic.test.mjs && node test/reply.test.mjs && node test/speech.test.mjs && node test/prompt.test.mjs && node test/barge.test.mjs"
+    "test": "node test/instance.test.mjs && node test/host.test.mjs && node test/secrets.test.mjs && node test/asr.test.mjs && node test/paraformer.test.mjs && node test/live.test.mjs && node test/tts.test.mjs && node test/pane.test.mjs && node test/mic.test.mjs && node test/reply.test.mjs && node test/speech.test.mjs && node test/prompt.test.mjs && node test/barge.test.mjs"
   },
   "dependencies": {
     "ws": "^8.23.0"

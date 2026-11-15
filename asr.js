@@ -241,7 +241,7 @@ async function readParaformerResult(channel, onUpdate) {
   let duration;
   for (;;) {
     const frame = await channel.next();
-    if (!frame) break;
+    if (!frame) throw new Error('Bailian socket closed before task-finished');
     if (frame.error) throw frame.error;
     if (frame.isBinary) continue;
     const message = readJson(frame);
@@ -283,6 +283,7 @@ export async function openParaformerSession(options) {
     hints = ['zh', 'en'],
     timeoutMs = 60000,
     connect = defaultConnect,
+    onUpdate,
   } = options;
   if (!apiKey) throw new Error('Bailian ASR needs an API key');
 
@@ -305,26 +306,44 @@ export async function openParaformerSession(options) {
       payload: { task_group: 'audio', task: 'asr', function: 'recognition', model, parameters, input: {} },
     }),
   );
-  await awaitEvent(channel, 'task-started');
+  try {
+    await awaitEvent(channel, 'task-started');
+  } catch (failure) {
+    channel.close();
+    throw failure;
+  }
 
-  let reading = null;
+  let closed = false;
+  let finishing = null;
+  let updateListener = onUpdate;
+  // Exactly one reader owns the duplex socket, starting BEFORE finish-task.
+  // Store failures as values until finish() so a provider failure while the
+  // microphone is open cannot become an unhandled rejection.
+  const result = readParaformerResult(channel, (update) => {
+    if (!closed && typeof updateListener === 'function') updateListener(update);
+  }).then((value) => ({ value }), (error) => ({ error }));
   return {
     send(pcm) {
-      channel.send(pcm);
+      if (!closed && !finishing) channel.send(pcm);
     },
-    /** Stop accepting audio, wait for the final transcript. */
-    finish(onUpdate) {
-      if (reading) return reading;
-      channel.send(
-        JSON.stringify({
+    /** Stop accepting audio, wait for the existing reader's final transcript. */
+    finish(listener) {
+      if (finishing) return finishing;
+      if (listener) updateListener = listener; // compatibility for one-shot callers
+      finishing = (async () => {
+        if (closed) throw new Error('Paraformer session is closed');
+        channel.send(JSON.stringify({
           header: { action: 'finish-task', task_id: taskId, streaming: 'duplex' },
           payload: { input: {} },
-        }),
-      );
-      reading = readParaformerResult(channel, onUpdate);
-      return reading;
+        }));
+        const outcome = await result;
+        if (outcome.error) throw outcome.error;
+        return outcome.value;
+      })();
+      return finishing;
     },
     close() {
+      closed = true;
       channel.close();
     },
   };

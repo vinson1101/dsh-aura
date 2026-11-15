@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Aura",
-    "description": "A breathing particle orb pinned to the Web UI; it turns faster while a session runs and takes a colour per phase.",
+    "description": "A voice companion beside the real conversation: responsive foreground dialogue and independent tasks that survive natural interruption.",
     "detail": "docs/DETAIL.md"
   }
 }

@@ -8,6 +8,7 @@
  * Run with `node test/mic.test.mjs`.
  */
 import assert from 'node:assert/strict';
+import { withInstanceSocket } from './instance-socket.mjs';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -151,7 +152,7 @@ const globals = {
   AudioWorkletNode: AudioWorkletNodeStub,
   URL: window.URL,
   Blob: window.Blob,
-  WebSocket: WebSocketStub,
+  WebSocket: withInstanceSocket(WebSocketStub),
   location: { protocol: 'http:', host: '127.0.0.1:63215' },
 };
 for (const [key, value] of Object.entries(globals)) {
@@ -192,6 +193,10 @@ const slots = {
   },
 };
 plugin.apply({
+  remote: { commands: { async execute(_id, line) {
+    assert.equal(line, '/aura on');
+    return { ok: true, value: { result: { kind: 'success' } } };
+  } } },
   inject: (_services, callback) =>
     callback({
       sidebarRightTabs: { register: () => () => {} },
@@ -223,7 +228,7 @@ await new Promise((resolve) => setTimeout(resolve, 20));
 
 assert.ok(sockets.length === 1, 'one live socket per turn');
 const socket = sockets[0];
-assert.equal(socket.url, 'ws://127.0.0.1:63215/aura/asr/live');
+assert.equal(socket.url, 'ws://127.0.0.1:63215/aura/asr/live?instance=test-instance-1');
 assert.ok(socket.sent.some((value) => typeof value === 'string' && JSON.parse(value).type === 'hello'));
 
 const frame = new Float32Array(320);
