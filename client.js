@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.31.7';
+const AURA_VERSION = '0.32.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1384,13 +1384,24 @@ registerProcessor('aura-capture', AuraCapture);`;
        * control ducks the microphone and the same voice measures 0.03 instead
        * of 0.3. The ratio to the room and to the echo is what holds, so the
        * absolute value is only a sanity bound. */
+      /* The capture worklet posts 128 samples per call: 8 ms at 16 kHz. Every
+       * duration below is milliseconds and converted here, once. */
+      const FRAME_MS = 8;
+      const framesFor = (ms) => Math.max(1, Math.round(ms / FRAME_MS));
       const BARGE_LEVEL = 0.02;
       /* Two frames is an onset: enough to tell speech from a click and short
        * enough to stop the voice while the first word is still being said. The
        * board's AFE uses a 128 ms onset delay for the same reason. */
-      const BARGE_FRAMES = 2;
+      /* 200 ms of onset: a syllable, not a click. */
+      const BARGE_FRAMES = framesFor(200);
       /* Playback needs a moment to settle before it can be talked over. */
       const BARGE_GUARD_MS = 400;
+      /* The head of an interrupted sentence lives in this window. */
+      const HEAD_MS = 800;
+      const HEAD_FRAMES = framesFor(HEAD_MS);
+      /* Enough history to see a syllable move. */
+      const ENVELOPE_MS = 1000;
+      const ENVELOPE_FRAMES = framesFor(ENVELOPE_MS);
       /* Both maxima are reported: an open gate shows what the microphone
        * actually hears, a closed one shows what echo cancellation leaves. */
       const bargeRef = React.useRef({
@@ -1432,6 +1443,14 @@ registerProcessor('aura-capture', AuraCapture);`;
       const replyBefore = React.useRef('');
 
       /** Stop playback and let the sphere settle. */
+      /**
+       * Silence the voice.
+       *
+       * `echoTail` keeps the microphone closed for a moment after the speaker
+       * stops, which is right when the answer ended by itself. It is wrong for
+       * an interruption: the user is still talking, and closing the gate there
+       * swallowed the next 150 ms of their sentence.
+       */
       const stopSpeaking = React.useCallback((options = {}) => {
         const cancel = options.abort !== false;
         /* Only a real cancellation invalidates the request in flight. Bumping
@@ -1455,7 +1474,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         levelRef.current = 0;
         setTalking(false);
         gateRef.current.active = false;
-        gateRef.current.until = Date.now() + 150;
+        gateRef.current.until = options.echoTail === false ? 0 : Date.now() + 150;
         if (!playback) return;
         for (const source of playback.sources || []) {
           try {
@@ -2118,22 +2137,22 @@ registerProcessor('aura-capture', AuraCapture);`;
                * a sentence lives here, and the confirm takes three frames. */
               const ring = state.headFrames || (state.headFrames = []);
               ring.push({ frame: event.data, level });
-              if (ring.length > 10) ring.shift();
+              if (ring.length > HEAD_FRAMES) ring.shift();
               /* Echo is only meaningful while the player is making sound. */
               state.echo = state.echo === null || state.echo === undefined
                 ? level
                 : state.echo * 0.9 + level * 0.1;
               state.micHist.push(level);
               state.playHist.push(levelRef.current || 0);
-              if (state.micHist.length > 10) state.micHist.shift();
-              if (state.playHist.length > 10) state.playHist.shift();
+              if (state.micHist.length > ENVELOPE_FRAMES) state.micHist.shift();
+              if (state.playHist.length > ENVELOPE_FRAMES) state.playHist.shift();
 
               const threshold = Math.max(BARGE_LEVEL, (state.floor || 0) * 6, (state.echo || 0) * 2);
               const follows = correlation(state.micHist, state.playHist);
               const echoLike = follows > 0.8;
               /* Syllables make the envelope uneven; a steady noise does not.
                * A knock is loud for one frame and flat across the others. */
-              const window = state.micHist.slice(-4);
+              const window = state.micHist.slice(-framesFor(300));
               const mean = window.length ? window.reduce((sum, value) => sum + value, 0) / window.length : 0;
               const spread = mean > 0.001 ? Math.max(...window) / mean : 1;
               const speechShaped = window.length >= 3 && spread > 1.6;
@@ -2165,10 +2184,11 @@ registerProcessor('aura-capture', AuraCapture);`;
                 gateRef.current.active = false;
                 gateRef.current.until = 0;
                 gaggedRef.current = runSeqRef.current;
-                stopSpeaking();
+                /* Keep the microphone open: the user is mid-sentence. */
+                stopSpeaking({ echoTail: false });
                 /* The head: only the frames that clearly beat the echo, oldest
                  * first, and only once — the stream continues from here. */
-                const head = (state.headFrames || []).slice(-10);
+                const head = (state.headFrames || []).slice(-HEAD_FRAMES);
                 for (const entry of head) vad.push(entry.frame);
                 diag('head_replayed', { frames: head.length });
                 state.headFrames = [];

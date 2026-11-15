@@ -45,3 +45,23 @@ assert.ok(
 );
 
 console.log('barge.test.mjs: ok');
+
+/* ---- durations are milliseconds, not frames --------------------------- */
+
+{
+  /* The capture worklet posts 128 samples per call: 8 ms at 16 kHz. Reading a
+   * "frame" as 100 ms is what made an onset 16 ms long and the head cache 80
+   * ms deep — both far smaller than their comments claimed. */
+  assert.ok(source.includes('const FRAME_MS = 8'), 'the frame length is stated once');
+  assert.ok(source.includes('const framesFor = (ms)'), 'and converted in one place');
+  assert.ok(source.includes('const BARGE_FRAMES = framesFor(200)'), 'an onset is 200 ms');
+  assert.ok(source.includes('const HEAD_FRAMES = framesFor(HEAD_MS)'), 'the head is measured in ms');
+  assert.ok(
+    source.includes("options.echoTail === false ? 0 : Date.now() + 150"),
+    'an interruption can keep the microphone open',
+  );
+  assert.ok(
+    source.includes('stopSpeaking({ echoTail: false })'),
+    'and the barge path does exactly that',
+  );
+}
