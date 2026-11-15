@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.32.3';
+const AURA_VERSION = '0.32.4';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -2188,6 +2188,11 @@ registerProcessor('aura-capture', AuraCapture);`;
                   corr: Number(follows.toFixed(2)),
                   spread: Number(spread.toFixed(2)),
                   threshold: Number(needed.toFixed(3)),
+                  track: (() => {
+                    const stream = captureRef.current && captureRef.current.stream;
+                    const track = stream ? stream.getAudioTracks()[0] : null;
+                    return track ? track.readyState + (track.muted ? "/muted" : "/live") : "none";
+                  })(),
                 });
                 state.probeAt = Date.now();
               }
