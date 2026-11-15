@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.28.3';
+const AURA_VERSION = '0.28.4';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1552,6 +1552,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             bargeRef.current.startedAt = Date.now();
             bargeRef.current.streak = 0;
             bargeRef.current.echo = 0;
+            bargeRef.current.interruptedAt = -1;
             playback.pending += 1;
             window.clearTimeout(playback.finishTimer);
             gateRef.current.active = true;
@@ -2084,8 +2085,19 @@ registerProcessor('aura-capture', AuraCapture);`;
                 state.gatedMax = 0;
                 state.probeAt = Date.now();
               }
-              if (bargeRef.current.streak >= BARGE_FRAMES) {
-                diag('barge_in', { level: Number(level.toFixed(3)), floor: Number(state.floor.toFixed(3)) });
+              /* Once per burst: after a trigger the microphone has to fall
+               * quiet for a while before the same utterance can interrupt
+               * again. */
+              const cooled =
+                state.lastBargeAt === undefined || Date.now() - state.lastBargeAt > 1200;
+              const already = !cooled;
+              if (state.streak >= BARGE_FRAMES && !already) {
+                state.lastBargeAt = Date.now();
+                diag('barge_in', {
+                  level: Number(level.toFixed(3)),
+                  floor: Number(state.floor.toFixed(3)),
+                  threshold: Number(threshold.toFixed(3)),
+                });
                 bargeRef.current.streak = 0;
                 gateRef.current.active = false;
                 gateRef.current.until = 0;
