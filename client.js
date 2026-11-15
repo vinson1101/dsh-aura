@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.29.2';
+const AURA_VERSION = '0.29.3';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -2136,10 +2136,13 @@ registerProcessor('aura-capture', AuraCapture);`;
                  * person: feeding them to the recognizer is what made later
                  * transcripts contain the assistant voice. Discard them and
                  * accept that the first syllable may be cut. */
-                /* Keep a short pre-roll: the first syllable usually starts
-                 * just before the level crosses the threshold, and 400 ms is
-                 * short enough not to carry much of the speaker with it. */
-                for (const frame of recent.slice(-4)) vad.push(frame);
+                /* The confirmation takes ~600 ms, so the opening of the
+                 * sentence is inside this buffer. Keep 800 ms of it, and only
+                 * the frames that stand above the echo floor: what is quiet in
+                 * there is the speaker, not the person. */
+                const echoFloor = Math.max(0.01, (state.echo || 0) * 1.2);
+                const spoken = recent.filter((frame) => levelOfFrame(frame) > echoFloor);
+                for (const frame of spoken.slice(-8)) vad.push(frame);
                 recent.length = 0;
               }
               return;
