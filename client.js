@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.28.1';
+const AURA_VERSION = '0.28.2';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -1346,8 +1346,8 @@ registerProcessor('aura-capture', AuraCapture);`;
       /* A floor, not a whisper: below this the microphone hears the room, a
        * fan, or its own speaker. */
       const BARGE_LEVEL = 0.035;
-      /* Five frames — about half a second — is a word, not a click. */
-      const BARGE_FRAMES = 5;
+      /* Six frames — about 600 ms — is a word, not a click or a cupboard. */
+      const BARGE_FRAMES = 6;
       /* Playback needs a moment to settle before it can be talked over. */
       const BARGE_GUARD_MS = 400;
       /* Both maxima are reported: an open gate shows what the microphone
@@ -1550,6 +1550,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             voiceRef.current = playback;
             bargeRef.current.startedAt = Date.now();
             bargeRef.current.streak = 0;
+            bargeRef.current.echo = 0;
             playback.pending += 1;
             window.clearTimeout(playback.finishTimer);
             gateRef.current.active = true;
@@ -2039,11 +2040,20 @@ registerProcessor('aura-capture', AuraCapture);`;
               if (recent.length > 10) recent.shift();
               const state = bargeRef.current;
               const level = levelOfFrame(event.data);
+
+              /* The first frames of playback measure the speaker leaking back
+               * into the microphone; that becomes the reference a real voice
+               * has to beat. */
+              if (Date.now() - (state.startedAt || 0) < BARGE_GUARD_MS) {
+                state.echo = Math.max(state.echo || 0, level);
+              }
               state.all = Math.max(state.all, level);
               /* The threshold follows the room: an air conditioner or a fan is
                * not an interruption, a voice over it is. */
               state.floor = state.floor === null ? level : state.floor * 0.92 + level * 0.08;
-              const threshold = Math.max(BARGE_LEVEL, state.floor * 4);
+              /* Room tone, its own speaker, and an absolute floor: the noisiest
+               * of the three decides what counts as a voice. */
+              const threshold = Math.max(BARGE_LEVEL, state.floor * 4, (state.echo || 0) * 1.6);
               const settled = Date.now() - (state.startedAt || 0) > BARGE_GUARD_MS;
               state.streak = settled && level > threshold ? state.streak + 1 : 0;
               if (level > state.probe) state.probe = level;
@@ -2052,6 +2062,7 @@ registerProcessor('aura-capture', AuraCapture);`;
                 diag('mic_level', {
                   gated: Number((state.gatedMax || 0).toFixed(3)),
                   floor: Number(state.floor.toFixed(3)),
+                  echo: Number((state.echo || 0).toFixed(3)),
                   threshold: Number(threshold.toFixed(3)),
                   guard: Date.now() - (state.startedAt || 0) < BARGE_GUARD_MS,
                 });
