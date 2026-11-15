@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.32.7';
+const AURA_VERSION = '0.33.0';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -236,6 +236,27 @@ window.__ModuleLoader__.load({
      */
     /** The one live capture, with a number so the beacons can be paired. */
     const liveCapture = { current: null, seq: 0, opening: false };
+
+    /** Letters and digits only: punctuation and spaces differ between rounds. */
+    function bare(text) {
+      return String(text || '').replace(/[^\p{L}\p{N}]/gu, '');
+    }
+
+    /**
+     * Does this transcript come from our own speech?
+     *
+     * A partial of our own voice is a fragment of what we are saying, so it is
+     * contained in it. A person's words are not — that is the whole test.
+     */
+    function fromOurVoice(transcript, spoken) {
+      const heard = bare(transcript);
+      const said = bare(spoken);
+      if (!heard) return true;
+      if (!said) return false;
+      /* Four characters of agreement is more than a coincidence. */
+      const probe = heard.slice(-6);
+      return probe.length >= 4 && said.includes(probe);
+    }
 
     function levelOfFrame(frame) {
       if (!frame) return 0;
@@ -1513,6 +1534,8 @@ registerProcessor('aura-capture', AuraCapture);`;
        * player yet and build their own: three contexts, three overlapping
        * voices. Serialise them, and stamp each with a generation so a stopped
        * turn's queued work is discarded rather than played. */
+      /* The last few seconds of our own speech, for the echo test. */
+      const spokenRef = React.useRef('');
       const speakQueue = React.useRef(Promise.resolve());
       const speakGeneration = React.useRef(0);
       /* Set when the user stops the voice — by interrupting, by pressing stop,
@@ -1544,6 +1567,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             diag('tts_request', { chars: spoken.length });
             const controller = new AbortController();
             speechAbort.current = controller;
+            spokenRef.current = (spokenRef.current + ' ' + spoken).slice(-240);
             const response = await fetch('/aura/tts', {
               method: 'POST',
               signal: controller.signal,
@@ -2053,6 +2077,15 @@ registerProcessor('aura-capture', AuraCapture);`;
                 if (message.partial) {
                   partialRef.current = { text, at: Date.now() };
                   setHeard(text);
+                  /* Somebody is saying something we are not: that is an
+                   * interruption, and the recognizer is the authority. */
+                  if (voiceRef.current && !fromOurVoice(text, spokenRef.current)) {
+                    diag('barge_heard', { chars: text.length });
+                    gaggedRef.current = runSeqRef.current;
+                    stopSpeaking({ echoTail: false });
+                    gateRef.current.active = false;
+                    gateRef.current.until = 0;
+                  }
                   return;
                 }
                 turn.release({ text });
@@ -2190,6 +2223,9 @@ registerProcessor('aura-capture', AuraCapture);`;
             const settled = Date.now() - (state.startedAt || 0) > BARGE_GUARD_MS;
 
             if (playing) {
+              /* The recognizer hears the answer too; its words are filtered by
+               * comparison with what we are saying, not by level. */
+              vad.push(event.data);
               /* A short ring of what the gate is about to swallow: the head of
                * a sentence lives here, and the confirm takes three frames. */
               const ring = state.headFrames || (state.headFrames = []);
