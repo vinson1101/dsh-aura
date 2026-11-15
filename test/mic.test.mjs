@@ -256,3 +256,28 @@ assert.ok(
 root.unmount();
 console.log('mic.test.mjs: ok');
 console.log('  audio streamed:', audioBefore, 'bytes');
+
+/* ---- the interruption detector reads the samples it is given ----------- */
+
+{
+  /* The bug this guards: the worklet posts Float32 samples and the detector
+   * parsed them as 16-bit integers, so every frame measured zero and nobody
+   * could ever interrupt. The function is pulled out of the bundle because it
+   * is a plain function, and evaluated on samples of each shape. */
+  const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8');
+  const start = source.indexOf('function levelOfFrame');
+  const end = source.indexOf('function mountOrb', start);
+  assert.ok(start > 0 && end > start, 'levelOfFrame is present');
+  const factory = new Function(`${source.slice(start, end)}; return levelOfFrame;`);
+  const levelOfFrame = factory();
+
+  const loud = new Float32Array(1600).fill(0.3);
+  const quiet = new Float32Array(1600).fill(0.001);
+  assert.ok(levelOfFrame(loud) > 0.2, 'a loud float frame measures loud: ' + levelOfFrame(loud));
+  assert.ok(levelOfFrame(quiet) < 0.01, 'a quiet float frame measures quiet');
+  assert.ok(levelOfFrame(loud) > levelOfFrame(quiet) * 50, 'voice clearly beats room tone');
+
+  /* PCM16 is accepted too, in case the capture path changes shape. */
+  const pcm = new Int16Array(1600).fill(10000);
+  assert.ok(levelOfFrame(pcm) > 0.2, 'a loud 16-bit frame measures loud: ' + levelOfFrame(pcm));
+}

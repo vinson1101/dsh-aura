@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.25.3';
+const AURA_VERSION = '0.25.4';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -177,10 +177,27 @@ window.__ModuleLoader__.load({
      *
      * The contract is `mount(canvas, readPhase) -> { refresh, dispose }`.
      */
-    /** Root-mean-square of one PCM16 frame, on the same 0..1 scale as playback. */
-    function levelOfFrame(buffer) {
-      const samples = new Int16Array(buffer);
-      if (samples.length === 0) return 0;
+    /**
+     * Root-mean-square of one captured frame, on a 0..1 scale.
+     *
+     * The worklet posts Float32 samples, so reading them as 16-bit would scale
+     * every value down to zero and make "is somebody talking" answer no,
+     * forever. Both shapes are accepted because the type of a postMessage port
+     * is not something this file should assume twice.
+     */
+    function levelOfFrame(frame) {
+      if (!frame) return 0;
+      const length = frame.length || 0;
+      if (length === 0) return 0;
+      if (typeof frame[0] === 'number' && Math.abs(frame[0]) <= 1.5) {
+        let sum = 0;
+        for (let index = 0; index < length; index += 1) {
+          const value = frame[index];
+          sum += value * value;
+        }
+        return Math.sqrt(sum / length);
+      }
+      const samples = frame instanceof Int16Array ? frame : new Int16Array(frame.buffer || frame);
       let sum = 0;
       for (let index = 0; index < samples.length; index += 1) {
         const value = samples[index] / 32768;
@@ -1290,8 +1307,8 @@ registerProcessor('aura-capture', AuraCapture);`;
       };
       /* Barge-in needs the frames the gate is dropping, so they are measured
        * here: a voice over the speaker for ~300 ms means "stop talking". */
-      const BARGE_LEVEL = 0.055;
-      const bargeRef = React.useRef({ streak: 0, frames: [] });
+      const BARGE_LEVEL = 0.02;
+      const bargeRef = React.useRef({ streak: 0, frames: [], floor: null, probe: 0, probeAt: 0 });
       const levelRef = React.useRef(0);
       /* Survives a reload: shipping a new bundle reloads the page mid-run, and
        * the reply of that run must still be spoken by the new instance. */
@@ -1897,10 +1914,21 @@ registerProcessor('aura-capture', AuraCapture);`;
               const recent = bargeRef.current.frames;
               recent.push(event.data);
               if (recent.length > 10) recent.shift();
+              const state = bargeRef.current;
               const level = levelOfFrame(event.data);
-              bargeRef.current.streak = level > BARGE_LEVEL ? bargeRef.current.streak + 1 : 0;
+              /* The threshold follows the room: an air conditioner or a fan is
+               * not an interruption, a voice over it is. */
+              state.floor = state.floor === null ? level : state.floor * 0.92 + level * 0.08;
+              const threshold = Math.max(BARGE_LEVEL, state.floor * 3);
+              state.streak = level > threshold ? state.streak + 1 : 0;
+              if (level > state.probe) state.probe = level;
+              if (Date.now() - state.probeAt > 1500) {
+                diag('barge_probe', { max: Number(state.probe.toFixed(3)), floor: Number(state.floor.toFixed(3)), threshold: Number(threshold.toFixed(3)) });
+                state.probe = 0;
+                state.probeAt = Date.now();
+              }
               if (bargeRef.current.streak >= 3) {
-                diag('barge_in', { level: Number(level.toFixed(3)) });
+                diag('barge_in', { level: Number(level.toFixed(3)), floor: Number(state.floor.toFixed(3)) });
                 bargeRef.current.streak = 0;
                 gateRef.current.active = false;
                 gateRef.current.until = 0;
