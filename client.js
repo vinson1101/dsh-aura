@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.32.1';
+const AURA_VERSION = '0.32.2';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -221,6 +221,9 @@ window.__ModuleLoader__.load({
      * forever. Both shapes are accepted because the type of a postMessage port
      * is not something this file should assume twice.
      */
+    /** The one live capture, with a number so the beacons can be paired. */
+    const liveCapture = { current: null, seq: 0 };
+
     function levelOfFrame(frame) {
       if (!frame) return 0;
       const length = frame.length || 0;
@@ -1909,9 +1912,15 @@ registerProcessor('aura-capture', AuraCapture);`;
       const stopCapture = React.useCallback(() => {
         const capture = captureRef.current;
         captureRef.current = null;
+        if (liveCapture.current && (!capture || liveCapture.current.id === capture.id)) {
+          liveCapture.current = null;
+        }
         setListening(false);
-        if (!capture) return;
-        diag('mic_stop');
+        if (!capture) {
+          diag('mic_stop_empty');
+          return;
+        }
+        diag('mic_stop', { id: capture.id });
         try {
           capture.node.port.onmessage = null;
           capture.source.disconnect();
@@ -1955,6 +1964,10 @@ registerProcessor('aura-capture', AuraCapture);`;
       const startCapture = React.useCallback(async () => {
         /* Opening is asynchronous; without this guard a second call slips in
          * before the first has a stream, and two captures fight for the device. */
+        if (liveCapture.current) {
+          diag('mic_busy', { live: liveCapture.current.id });
+          return;
+        }
         if (openingRef.current || captureRef.current) {
           diag('mic_ignored', { opening: openingRef.current, open: Boolean(captureRef.current) });
           return;
@@ -2216,10 +2229,14 @@ registerProcessor('aura-capture', AuraCapture);`;
             state.streak = 0;
             vad.push(event.data);
           };
-          captureRef.current = { stream, audio, source, node, sink, vad, socket };
+          liveCapture.seq += 1;
+          const id = liveCapture.seq;
+          const record = { id, stream, audio, source, node, sink, vad, socket };
+          liveCapture.current = record;
+          captureRef.current = record;
           openingRef.current = false;
           setListening(true);
-          diag('mic_start', { rate: audio.sampleRate });
+          diag('mic_start', { rate: audio.sampleRate, id });
         } catch (failure) {
           openingRef.current = false;
           diag('mic_error', { message: String((failure && failure.message) || failure).slice(0, 160) });
