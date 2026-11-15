@@ -14,7 +14,7 @@
  */
 /* Declared before the loader runs: even the first beacon reads it, and a
  * factory-scope `const` would still be in its dead zone at that point. */
-const AURA_VERSION = '0.31.5';
+const AURA_VERSION = '0.31.6';
 
 window.__ModuleLoader__.load({
   id: 'dsh-aura',
@@ -2131,14 +2131,21 @@ registerProcessor('aura-capture', AuraCapture);`;
               const threshold = Math.max(BARGE_LEVEL, (state.floor || 0) * 6, (state.echo || 0) * 2);
               const follows = correlation(state.micHist, state.playHist);
               const echoLike = follows > 0.8;
+              /* Syllables make the envelope uneven; a steady noise does not.
+               * A knock is loud for one frame and flat across the others. */
+              const window = state.micHist.slice(-4);
+              const mean = window.length ? window.reduce((sum, value) => sum + value, 0) / window.length : 0;
+              const spread = mean > 0.001 ? Math.max(...window) / mean : 1;
+              const speechShaped = window.length >= 3 && spread > 1.6;
               const needed = echoLike ? threshold * 2 : threshold;
-              state.streak = settled && level > needed ? state.streak + 1 : 0;
+              state.streak = settled && level > needed && speechShaped ? state.streak + 1 : 0;
 
               if (Date.now() - state.probeAt > 3000) {
                 diag('mic_level', {
                   level: Number(level.toFixed(3)),
                   echo: Number((state.echo || 0).toFixed(3)),
                   corr: Number(follows.toFixed(2)),
+                  spread: Number(spread.toFixed(2)),
                   threshold: Number(needed.toFixed(3)),
                 });
                 state.probeAt = Date.now();
