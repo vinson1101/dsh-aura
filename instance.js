@@ -59,5 +59,14 @@ export function installInstance(ctx, { heartbeatMs = 4000, timeoutMs = 12000 } =
       sockets.close();
     };
   }, 'dsh-aura: runtime singleton lifetime');
-  return { authorize };
+  return {
+    authorize,
+    deliver(sessionId, message) {
+      // No backlog/replay: reopening a pane must not start old audio.
+      if (!owner || owner.sessionId !== sessionId || owner.peer.readyState !== 1
+        || Date.now() - owner.seen > timeoutMs) return false;
+      try { owner.peer.send(JSON.stringify({ ...message, sessionId })); return true; }
+      catch { return false; }
+    },
+  };
 }

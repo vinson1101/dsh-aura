@@ -18,6 +18,7 @@ import { JSDOM } from 'jsdom';
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const source = fs.readFileSync(path.join(here, '..', 'client.js'), 'utf8');
+const continuous = process.env.AURA_TEST_CONTINUOUS === '1';
 
 /* ---- DOM + audio seams -------------------------------------------------- */
 
@@ -47,6 +48,7 @@ window.requestAnimationFrame = (callback) => {
 window.cancelAnimationFrame = (id) => window.clearTimeout(id);
 
 let liveNode = null;
+let graphCount = 0, mediaCount = 0;
 class AudioContextStub {
   constructor(options = {}) {
     this.sampleRate = options.sampleRate || 48000;
@@ -63,7 +65,7 @@ class AudioWorkletNodeStub {
     this.context = ctx;
     this.name = name;
     this.port = { onmessage: null };
-    liveNode = this;
+    liveNode = this; graphCount += 1;
   }
   connect() {}
   disconnect() {}
@@ -75,7 +77,7 @@ window.URL.revokeObjectURL = () => {};
 
 let stoppedTracks = 0;
 const stream = { getTracks: () => [{ stop: () => { stoppedTracks += 1; } }] };
-const mediaDevices = { getUserMedia: async () => stream };
+const mediaDevices = { getUserMedia: async () => { mediaCount += 1; return stream; } };
 Object.defineProperty(window.navigator, 'mediaDevices', { value: mediaDevices, configurable: true });
 
 /* ---- the bridge protocol on a fake socket -------------------------------- */
@@ -111,7 +113,8 @@ class WebSocketStub {
       return;
     }
     if (message.type === 'listen' && message.state === 'start') {
-      reply({ type: 'listen', state: 'start', mode: 'manual' });
+      const ready = () => reply({ type: 'listen', state: 'start', mode: 'manual' });
+      if (continuous) this.makeReady = ready; else ready();
       /* One partial so the caption path is exercised too. */
       /* A sentence-final partial is what allows the short pause to end the turn. */
       reply({ type: 'stt', text: '打开插件市场。', partial: true });
@@ -221,7 +224,7 @@ await new Promise((resolve) => setTimeout(resolve, 40));
 
 /* ---- speak, then stop speaking ----------------------------------------- */
 
-const mic = container.querySelector('button[aria-label="Start listening"]');
+const mic = container.querySelector(continuous ? 'button[aria-label="Start call"]' : 'button[aria-label="Start listening"]');
 assert.ok(mic, 'the pane must offer a microphone control');
 mic.click();
 await new Promise((resolve) => setTimeout(resolve, 20));
@@ -235,6 +238,30 @@ const frame = new Float32Array(320);
 const loud = new Float32Array(320);
 for (let i = 0; i < loud.length; i += 1) loud[i] = 0.2 * Math.sin((i / 16000) * 2 * Math.PI * 220);
 
+if (continuous) {
+  const originalNode = liveNode;
+  for (let round = 0; round < 10; round++) {
+    const currentSocket = sockets[round];
+    assert.ok(currentSocket?.makeReady, 'new ASR session, same microphone');
+    const before = currentSocket.audio || 0;
+    // 38 RAW samples blocks before actual readiness, not 38 network packets.
+    for (let i = 0; i < 38; i++) liveNode.port.onmessage({ data: loud });
+    assert.equal(currentSocket.audio || 0, before, 'no wire audio before ready');
+    const held = window.__auraCapture.queue.stats().held;
+    currentSocket.makeReady();
+    assert.equal(currentSocket.audio, Math.floor(held / 1600) * 3200, 'all full 100ms blocks (including boundary remainder) flushed exactly once');
+    for (let i = 0; i < 50; i++) liveNode.port.onmessage({ data: frame });
+    await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(prompts.length, round + 1, 'one final per synthetic turn');
+    assert.equal(liveNode, originalNode, 'same worklet across all turns');
+    assert.equal(mediaCount, 1); assert.equal(graphCount, 1); assert.equal(stoppedTracks, 0);
+  }
+  container.querySelector('button[aria-label="End call"]').click();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(stoppedTracks, 1, 'hangup releases the single microphone');
+  root.unmount();
+  console.log('mic.test.mjs: synthetic ten-turn call ok (NOT Mac microphone acceptance)');
+} else {
 /* 400 ms of speech, then 1000 ms of silence: the endpoint is 900 ms. */
 for (let i = 0; i < 20; i += 1) liveNode.port.onmessage({ data: loud });
 await new Promise((resolve) => setTimeout(resolve, 20));
@@ -261,6 +288,7 @@ assert.ok(
 root.unmount();
 console.log('mic.test.mjs: ok');
 console.log('  audio streamed:', audioBefore, 'bytes');
+}
 
 /* ---- the interruption detector reads the samples it is given ----------- */
 

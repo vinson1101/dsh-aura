@@ -1,6 +1,6 @@
 {
   "name": "dsh-aura",
-  "version": "0.35.0",
+  "version": "0.35.3",
   "description": "A voice companion for DeepSeek Harness: responsive conversation and independently managed tasks, with natural interruption that leaves work running.",
   "license": "MIT",
   "author": "vinson1101",
@@ -29,6 +29,7 @@
     "asr.js",
     "tts.js",
     "tasks.js",
+    "task-speech.js",
     "instance.js",
     "secrets.js",
     "client.js",
@@ -66,7 +67,7 @@
     "react-dom": "^18.3.1"
   },
   "scripts": {
-    "test": "node test/instance.test.mjs && node test/host.test.mjs && node test/secrets.test.mjs && node test/asr.test.mjs && node test/paraformer.test.mjs && node test/live.test.mjs && node test/tts.test.mjs && node test/pane.test.mjs && node test/mic.test.mjs && node test/reply.test.mjs && node test/speech.test.mjs && node test/prompt.test.mjs && node test/barge.test.mjs"
+    "test": "node test/task-speech.test.mjs && node test/instance.test.mjs && node test/host.test.mjs && node test/secrets.test.mjs && node test/asr.test.mjs && node test/paraformer.test.mjs && node test/live.test.mjs && node test/tts.test.mjs && node test/pane.test.mjs && node test/mic.test.mjs && node test/reply.test.mjs && node test/speech.test.mjs && node test/prompt.test.mjs && node test/barge.test.mjs && node test/dispatch-race.test.mjs && AURA_TEST_CONTINUOUS=1 node test/mic.test.mjs"
   },
   "dependencies": {
     "ws": "^8.23.0"

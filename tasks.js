@@ -3,7 +3,7 @@ export const FOREGROUND_PROMPT = `## Aura 前台对话
 你是 Aura 的实时对话前台，不是任务执行器。简单问题直接简短回答；查资料、读写文件、运行命令、测试等实际工作交给 aura_task，然后立即确认已派发并结束本轮，不等待、不轮询。
 派发必须提供完整上下文：用户目标、已知事实、相关路径、约束、授权边界、验收标准；执行者不继承这段对话。不要把猜测当成事实，不要扩大用户授权。
 收到新话题就立即回应新话题；插话只替换前台回答，不代表取消已经派发的任务。只有用户明确要求停止某个任务才使用 aura_interrupt_task，目标不清楚先问。任务的后代是独立任务，若需停止也须逐个明确处理。
-需要了解状态时使用 list_agents；给任务补充信息使用 send_message。收到执行者进度或原生完成通知，向用户简短汇报真实结果，不编造成功、不朗读日志。若工具缺失，明确说明，不要声称已经派发。
+需要了解状态时使用 list_agents；给任务补充信息使用 send_message。插话没听到派发回执不等于未接单：先查 list_agents 中同一任务及子会话ID，不得仅因回执未播报而重派；明确尚未接受或派发失败才报告真实状态。收到执行者进度或原生完成通知，向用户简短汇报真实结果，不编造成功、不朗读日志。若工具缺失，明确说明，不要声称已经派发。
 语音回答通常一两句，先结论后理由。`;
 
 const output = {
@@ -11,7 +11,7 @@ const output = {
   render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
 };
 
-export function mountForeground(agent, subagents) {
+export function mountForeground(agent, subagents, taskSpeech) {
   const tools = agent.ctx.get('tools');
   const prompts = agent.ctx.get('systemPrompt');
   const disposers = [];
@@ -28,13 +28,18 @@ export function mountForeground(agent, subagents) {
       output,
       async execute(args, exec) {
         exec.signal.throwIfAborted();
-        const started = await subagents.startActivation({
-          provider: 'spawn', parent: agent, label: args.description,
-          cwd: agent.session.header.cwd,
-          prompt: [{ type: 'text', text: `${args.prompt}\n\n你是独立任务执行者。按用户授权完成实际工作；前台插话不是取消信号。关键阶段可通过 list_agents 确认派发你的父级名称，再用 send_message 向其汇报简短进度，不要高频轮询。完成后给出结果、验证及限制；不要仅启动 shell 后台工作就宣称任务完成。` }],
-          signal: exec.signal, delivery: 'parent',
-          maxDepth: subagents.resolveMaxDepth(),
-        });
+        const childId = taskSpeech?.reserve(agent);
+        let started;
+        try {
+          started = await subagents.startActivation({
+            ...(childId ? { childId } : {}),
+            provider: 'spawn', parent: agent, label: args.description,
+            cwd: agent.session.header.cwd,
+            prompt: [{ type: 'text', text: `${args.prompt}\n\n你是独立任务执行者。按用户授权完成实际工作；前台插话不是取消信号。关键阶段可通过 list_agents 确认派发你的父级名称，再用 send_message 向其汇报简短进度，不要高频轮询。完成后给出结果、验证及限制；不要仅启动 shell 后台工作就宣称任务完成。` }],
+            signal: exec.signal, delivery: 'parent',
+            maxDepth: subagents.resolveMaxDepth(),
+          });
+        } catch (error) { taskSpeech?.forget(childId); throw error; }
         // Do not await result, bind signal after publication, or dispose on turn end.
         return { name: started.name, sessionId: started.childId, status: 'dispatched' };
       },
@@ -80,10 +85,10 @@ export function foregroundEnabled(events) {
   return enabled;
 }
 
-export function installTaskLayer(ctx) {
+export function installTaskLayer(ctx, taskSpeech) {
   const mounted = new Map();
   const enable = agent => {
-    if (!mounted.has(agent)) mounted.set(agent, mountForeground(agent, ctx.subagents));
+    if (!mounted.has(agent)) mounted.set(agent, mountForeground(agent, ctx.subagents, taskSpeech));
   };
   const disable = agent => { mounted.get(agent)?.(); mounted.delete(agent); };
   ctx.commands.register({

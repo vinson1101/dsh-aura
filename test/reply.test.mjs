@@ -53,6 +53,7 @@ class AudioContextStub {
     this.sampleRate = options.sampleRate || 48000;
     this.destination = {};
     this.state = "running";
+    this.currentTime = 0;
     this.audioWorklet = { addModule: async () => {} };
   }
   createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
@@ -67,11 +68,12 @@ class AudioContextStub {
     };
   }
   createBufferSource() {
+    const audio = this;
     const source = {
       buffer: null,
       onended: null,
       connect() {},
-      start() { played.push({ rate: this.buffer.sampleRate, length: this.buffer.length }); },
+      start(at) { audio.currentTime = at; /* synthetic playback has begun */ played.push({ rate: this.buffer.sampleRate, length: this.buffer.length }); },
       stop() { this.stopped = true; },
     };
     createdSources.push(source);
@@ -193,10 +195,10 @@ const eventSource = {
     for (const listener of listeners) listener();
   },
   /* The finished message landing in the durable log. */
-  finish(text) {
+  finish(text, turn) {
     entries.push({
       type: 'event',
-      event: { type: 'assistant/message', data: { message: { role: 'assistant', content: [{ type: 'text', text }] } } },
+      event: { type: 'assistant/message', data: { turn, message: { role: 'assistant', content: [{ type: 'text', text }] } } },
     });
   },
 };
@@ -325,9 +327,13 @@ await new Promise((resolve) => setTimeout(resolve, 20));
 assert.equal(ttsBodies.length, 0, 'nothing is spoken while the run is in flight');
 
 replyText = '收到，我来处理。';
-eventSource.finish(replyText);
 running = false;
 render();
+// The completion socket can beat the durable event snapshot after idle.
+await new Promise(resolve => setTimeout(resolve, 30));
+controls.find(c => c.readyState === 1).onmessage({ data: JSON.stringify({ type: 'task-summary', sessionId: 'session-test', key: 'fast-race:1', turn: 1, text: replyText }) });
+await new Promise(resolve => setTimeout(resolve, 20));
+eventSource.finish(replyText, 1);
 /* The pane waits ~120 ms then polls for a message that differs from the reply
  * it saw before this turn. */
 await new Promise((resolve) => setTimeout(resolve, 300));
@@ -340,11 +346,44 @@ assert.equal(played.length, 1, 'the audio must actually start');
 assert.equal(played[0].rate, 16000, 'playback runs at the provider rate');
 assert.equal(played[0].length, 4, 'four PCM16 samples');
 
+/* Fast task final also covered by normal speech must not be replayed over WS. */
+controls.find(c => c.readyState === 1).onmessage({ data: JSON.stringify({ type: 'task-summary', sessionId: 'session-test', key: 'fast:1', turn: 1, text: replyText }) });
+await new Promise(resolve => setTimeout(resolve, 200));
+assert.equal(ttsBodies.length, 1, 'normal reply and a late socket frame for the same turn speak once');
+
 /* A second settle with nothing new must not speak twice. */
 running = false;
 render();
 await new Promise((resolve) => setTimeout(resolve, 20));
 assert.equal(ttsBodies.length, 1, 'a settled run is spoken once');
+
+/* ---- delayed task completion, separately from foreground arming -------- */
+{
+  const control = controls.find(c => c.readyState === 1);
+  const summary = (key, text, sessionId = 'session-test') => control.onmessage({ data: JSON.stringify({ type: 'task-summary', sessionId, key, turn: 80, text }) });
+  // Finish the first foreground audio naturally (not Silence/cancel).
+  for (const source of createdSources) source.onended?.();
+  await new Promise(resolve => setTimeout(resolve, 450));
+  const before = ttsBodies.length, promptCount = prompts.length;
+  summary('foreign', '别的会话', 'other-session');
+  summary('task:80', '延后任务已经完成。');
+  summary('task:80', '延后任务已经完成。');
+  await new Promise(resolve => setTimeout(resolve, 350));
+  assert.equal(ttsBodies.length, before + 1, 'idle after initial reply speaks one targeted final task summary');
+  assert.equal(ttsBodies.at(-1).text, '延后任务已经完成。');
+  assert.equal(prompts.length, promptCount, 'completion speech never wakes the model a second time');
+  // A busy foreground gets priority; queued results do not cut across it.
+  running = true; render(); await new Promise(resolve => setTimeout(resolve, 30));
+  summary('task:81', '应当让路的摘要。');
+  await new Promise(resolve => setTimeout(resolve, 200));
+  assert.equal(ttsBodies.length, before + 1);
+  container.querySelector('button[aria-label="Silence"]').click();
+  running = false; render(); await new Promise(resolve => setTimeout(resolve, 250));
+  assert.equal(ttsBodies.length, before + 1, 'silencing clears queued task audio, idle never resumes it');
+  summary('task:82', '静音以后才到的结果也不能恢复播放。');
+  await new Promise(resolve => setTimeout(resolve, 200));
+  assert.equal(ttsBodies.length, before + 1, 'late completion after Silence stays silent until new explicit submission');
+}
 
 /* ---- a streaming run is spoken while it is still going ------------------ */
 

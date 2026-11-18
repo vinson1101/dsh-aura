@@ -10,7 +10,12 @@ The particle orb is a replaceable form, not Aura itself.
 - **Actual work:** the foreground dispatches an independent native managed worker
   with the full request, context and authorization. It returns immediately, rather
   than waiting for the task. Progress uses native agent messages; completion is
-  delivered back to the parent conversation.
+  delivered back to the parent conversation. Aura speaks the parent's final short
+  text summary once, only in the currently owned parent pane after an explicit
+  submission there. Busy foreground/user audio takes priority. Silence, interruption,
+  hangup or closing the pane discards pending task audio; a new explicit submission
+  enables future summaries again. Results remain in native conversation history;
+  reopening does not replay missed/old summaries or open the microphone.
 - **Natural interruption:** differing recognized speech silences obsolete playback;
   the final transcript replaces only the foreground turn. Already-dispatched work
   continues. There are no interruption keywords.

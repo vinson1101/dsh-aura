@@ -24,6 +24,7 @@ import { createKeyReader } from './secrets.js';
 import { createTts, speakablePrefix, textSegments } from './tts.js';
 import { installTaskLayer } from './tasks.js';
 import { installInstance } from './instance.js';
+import { installTaskSpeech } from './task-speech.js';
 
 export const inject = ['webServer', 'commands', 'subagents', 'tools', 'systemPrompt', 'agents'];
 
@@ -273,8 +274,9 @@ export function apply(ctx, config = {}) {
   });
   const asr = createAsr(asrConfig, readKey);
 
-  installTaskLayer(ctx);
   const instance = installInstance(ctx);
+  const taskSpeech = installTaskSpeech(ctx, instance.deliver);
+  installTaskLayer(ctx, taskSpeech);
   const audioRoute = handler => async (req, res) => {
     const cancelled = new AbortController();
     const detach = instance.authorize(req.headers['x-aura-instance'], () => {

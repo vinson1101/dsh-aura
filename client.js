@@ -17,7 +17,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     // Each replacement needs its own scope. A top-level const breaks the next
     // classic-script load with a global lexical redeclaration error.
-    const AURA_VERSION = '0.35.0';
+    const AURA_VERSION = '0.35.3';
     diag('factory');
     /* A reload replaces this module but not the running audio graph: stop the
      * capture the previous instance left holding the microphone. */
@@ -194,8 +194,57 @@ window.__ModuleLoader__.load({
       if (!said) return false;
       // Even a one-character prefix can be echo. Wait for words that differ
       // rather than interrupting ourselves on the first short partial.
-      const probe = heard.slice(-6);
-      return said.includes(probe);
+      return said.includes(heard); // A common suffix alone never vetoes a new sentence.
+    }
+
+    // Playback-clock references, not synthesis requests. No text is retained
+    // across cancellation; natural decay lasts at most 180 ms. PCM has no word
+    // alignment, so the reference granularity is one currently playing utterance.
+    function createPlaybackReference() {
+      let spans = [];
+      return {
+        add(audio, start, end, text, turn) {
+          spans = spans.filter(s => s.audio === audio && s.end + 0.18 >= audio.currentTime);
+          const last = spans[spans.length - 1];
+          if (last && last.audio === audio && last.text === text && last.turn === turn && start <= last.end + 0.01) last.end = end;
+          else spans.push({ audio, start, end, text, turn });
+          spans = spans.slice(-8);
+        },
+        read() {
+          spans = spans.filter(s => s.audio.state !== 'closed' && s.audio.currentTime <= s.end + 0.18);
+          return spans.filter(s => s.audio.state === 'running' && s.audio.currentTime >= s.start)
+            .map(s => s.text).join(' ');
+        },
+        clear() { spans = []; },
+      };
+    }
+
+    // Raw mono Float32 samples, at AudioContext.sampleRate (not wire blocks).
+    // Eight seconds is a bounded safety budget, NOT a measured network latency.
+    // Overflow is fatal/visible, never silently submit a truncated sentence.
+    function createSampleQueue(rate, maxMs = 8000) {
+      const limit = Math.ceil(rate * maxMs / 1000);
+      let frames = [], samples = 0, next = 0, delivered = 0, dropped = 0;
+      return {
+        push(data) {
+          const start = next; next += data.length;
+          if (samples + data.length > limit) { dropped += data.length; return false; }
+          frames.push({ start, data: data.slice() }); samples += data.length;
+          return true;
+        },
+        drain(feed) {
+          const held = frames; frames = []; samples = 0;
+          for (const frame of held) { feed(frame.data); delivered += frame.data.length; }
+        },
+        stats() { return { rate, next, delivered, dropped, held: samples, maxMs }; },
+      };
+    }
+
+    // Bounded, text-free local evidence. Never sends microphone PCM or captions.
+    function voiceTrace(stage, fields = {}) {
+      const rows = window.__auraVoiceTrace || (window.__auraVoiceTrace = []);
+      rows.push({ stage, at: Date.now(), ...fields });
+      if (rows.length > 160) rows.shift();
     }
 
     function levelOfFrame(frame) {
@@ -501,7 +550,7 @@ window.__ModuleLoader__.load({
 
       return {
         push(samples) {
-          if (done) return;
+          if (done) return samples;
           let data = samples;
           if (carry.length) {
             const merged = new Float32Array(carry.length + data.length);
@@ -510,11 +559,13 @@ window.__ModuleLoader__.load({
             data = merged;
           }
           let offset = 0;
-          while (data.length - offset >= CHUNK_SIZE) {
+          while (!done && data.length - offset >= CHUNK_SIZE) {
             take(data.subarray(offset, offset + CHUNK_SIZE));
             offset += CHUNK_SIZE;
           }
           carry = data.slice(offset);
+          if (done) { const tail = carry; carry = new Float32Array(0); return tail; }
+          return null;
         },
         end,
       };
@@ -1080,8 +1131,9 @@ registerProcessor('aura-capture', AuraCapture);`;
       React.useEffect(() => {
         let disposed = false, socket = null, terminal = false;
         let lastSeen = Date.now(), timeoutMs = 12000;
-        const listeners = new Set();
+        const listeners = new Set(), summaryListeners = new Set();
         const access = {
+          onSummary(fn) { summaryListeners.add(fn); return () => summaryListeners.delete(fn); },
           token: '', revoked: true,
           active: () => !disposed && !access.revoked && Date.now() - lastSeen < timeoutMs,
           subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
@@ -1116,6 +1168,9 @@ registerProcessor('aura-capture', AuraCapture);`;
                 diag('instance_owned', { sessionId: props.sessionId });
                 setState({ kind: 'owned', access });
               } else if (message.type === 'heartbeat') lastSeen = Date.now();
+              else if (message.type === 'task-summary' && message.sessionId === props.sessionId && access.active()) {
+                for (const fn of summaryListeners) fn(message);
+              }
             };
             socket.onerror = () => fail('Aura 连接失败，请重新打开。');
             socket.onclose = () => fail('Aura 连接已断开，通话已结束。后台任务仍独立运行。');
@@ -1384,6 +1439,22 @@ registerProcessor('aura-capture', AuraCapture);`;
         [choose],
       );
       const partialRef = React.useRef({ text: '', at: 0 });
+      const taskSummaries = React.useRef([]);
+      const coveredTurns = React.useRef(new Set());
+      const pendingFallback = React.useRef(false);
+      const coverCurrentTurn = () => {
+        const entries = services?.get?.('sessions')?.binding?.(props.sessionId)?.eventSource?.getSnapshot?.().entries || [];
+        for (const entry of entries) {
+          const turn = entry.event?.data?.turn;
+          if (!Number.isInteger(turn)) continue;
+          observedTurn.current = Math.max(observedTurn.current, turn);
+          coveredTurns.current.add(turn);
+          if (coveredTurns.current.size > 256) coveredTurns.current.delete(coveredTurns.current.values().next().value);
+        }
+      };
+      const summarySeen = React.useRef(new Set());
+      const observedTurn = React.useRef(-1);
+      const silencedThrough = React.useRef(-1);
       const voiceRef = React.useRef(null);
       // Playback state never gates microphone frames. The recognizer hears the
       // continuous stream; transcript/echo comparison decides interruption.
@@ -1392,7 +1463,8 @@ registerProcessor('aura-capture', AuraCapture);`;
       // Playback intent belongs to this live instance, not browser storage.
       // Remounting or restarting must never replay a different/obsolete turn.
       const speakNext = React.useRef(false);
-      const armSpeak = (armed) => { speakNext.current = armed; };
+      const taskSpeechEnabled = React.useRef(false);
+      const armSpeak = (armed) => { speakNext.current = armed; if (armed) taskSpeechEnabled.current = true; };
       const speakArmedRef = speakNext;
       /* The window still shows the previous reply for a moment after a run
        * ends, so the text from before this turn is captured and the new one is
@@ -1415,6 +1487,10 @@ registerProcessor('aura-capture', AuraCapture);`;
          * was stale and cancel itself, which is why the voice kept dying one
          * sentence in. */
         if (cancel) {
+          taskSummaries.current = [];
+          pendingFallback.current = false;
+          taskSpeechEnabled.current = false;
+          silencedThrough.current = Math.max(silencedThrough.current, observedTurn.current);
           speakGeneration.current += 1;
           const abort = speechAbort.current;
           speechAbort.current = null;
@@ -1426,6 +1502,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             }
           }
         }
+        if (cancel) spokenRef.current.clear();
         const playback = voiceRef.current;
         voiceRef.current = null;
         levelRef.current = 0;
@@ -1455,7 +1532,7 @@ registerProcessor('aura-capture', AuraCapture);`;
        * voices. Serialise them, and stamp each with a generation so a stopped
        * turn's queued work is discarded rather than played. */
       /* The last few seconds of our own speech, for the echo test. */
-      const spokenRef = React.useRef('');
+      const spokenRef = React.useRef(createPlaybackReference());
       const speakQueue = React.useRef(Promise.resolve());
       const speakGeneration = React.useRef(0);
       /* Set when the user stops the voice — by interrupting, by pressing stop,
@@ -1487,7 +1564,6 @@ registerProcessor('aura-capture', AuraCapture);`;
             diag('tts_request', { chars: spoken.length });
             const controller = new AbortController();
             speechAbort.current = controller;
-            spokenRef.current = (spokenRef.current + ' ' + spoken).slice(-240);
             const response = await fetch('/aura/tts', {
               method: 'POST',
               signal: controller.signal,
@@ -1576,8 +1652,11 @@ registerProcessor('aura-capture', AuraCapture);`;
                   stopSpeaking({ abort: false });
                 }, 400);
               };
-              source.start(Math.max(playback.at, audio.currentTime));
-              playback.at = Math.max(playback.at, audio.currentTime) + samples.length / rate;
+              const start = Math.max(playback.at, audio.currentTime);
+              source.start(start);
+              playback.at = start + samples.length / rate;
+              spokenRef.current.add(audio, start, playback.at, spoken, runSeqRef.current);
+              voiceTrace('play_span', { turn: runSeqRef.current, start, end: playback.at, chars: spoken.length });
             };
 
             voiceRef.current = playback;
@@ -1649,6 +1728,35 @@ registerProcessor('aura-capture', AuraCapture);`;
 
 
 
+      // Task completion is a separate, final-text-only channel. It never arms
+      // the foreground stream, prompts a model, or survives a closed pane.
+      React.useEffect(() => {
+        const off = props.access.onSummary(message => {
+          if (summarySeen.current.has(message.key)) return;
+          summarySeen.current.add(message.key);
+          if (summarySeen.current.size > 256) summarySeen.current.delete(summarySeen.current.values().next().value);
+          // The normal answer path already owns this turn, including idle's
+          // delayed fallback. Do not read the same reply a second time.
+          if (!taskSpeechEnabled.current || speakNext.current || message.turn <= silencedThrough.current || coveredTurns.current.has(message.turn) || speechGagged()) return;
+          const text = speechText(message.text).slice(0, 360);
+          if (!text) return;
+          taskSummaries.current.push({ ...message, text, generation: speakGeneration.current, at: Date.now() });
+          taskSummaries.current = taskSummaries.current.slice(-8);
+        });
+        const timer = window.setInterval(() => {
+          if (!props.access.active()) { taskSummaries.current = []; return; }
+          // Foreground/user audio always wins. Cancellation clears the queue;
+          // late delivery cannot resume old audio after a hangup or interruption.
+          if (runningRef.current || speakNext.current || pendingFallback.current || voiceRef.current
+            || pendingCapture.current || Date.now() - partialRef.current.at < 1500) return;
+          const next = taskSummaries.current.shift();
+          if (!next || next.generation !== speakGeneration.current || Date.now() - next.at > 30000
+            || coveredTurns.current.has(next.turn) || speechGagged()) return;
+          void speak(next.text);
+        }, 150);
+        return () => { off(); window.clearInterval(timer); taskSummaries.current = []; };
+      }, [props.sessionId, speak]);
+
       /* ---- speaking while the answer is still arriving ------------------- */
 
       const speechBuffer = React.useRef('');
@@ -1701,6 +1809,11 @@ registerProcessor('aura-capture', AuraCapture);`;
           const entries = (snapshot && snapshot.entries) || [];
           for (const entry of entries) {
             const event = entry && entry.event;
+            if (Number.isInteger(event?.data?.turn)) observedTurn.current = Math.max(observedTurn.current, event.data.turn);
+            if ((speakNext.current || speechGagged()) && Number.isInteger(event?.data?.turn)) {
+              coveredTurns.current.add(event.data.turn);
+              if (coveredTurns.current.size > 256) coveredTurns.current.delete(coveredTurns.current.values().next().value);
+            }
             if (!event || event.type !== 'assistant/live-chunk') continue;
             const seq = typeof event.seq === 'number' ? event.seq : 0;
             if (seq <= seen) continue;
@@ -1722,6 +1835,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       React.useEffect(() => {
         diag('run_watch', { running, was: wasRunning.current, wants: speakNext.current });
         if (running && !wasRunning.current) {
+          pendingFallback.current = false;
           runSeqRef.current += 1;
           gaggedRef.current = -1;
         }
@@ -1743,6 +1857,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             return;
           }
           if (speakNext.current) {
+            coverCurrentTurn();
             armSpeak(false);
             /* Whatever the stream left unfinished is the last sentence. */
             const tail = speechBuffer.current.trim();
@@ -1763,19 +1878,25 @@ registerProcessor('aura-capture', AuraCapture);`;
             const baseline = replyBefore.current;
             const watched = props.sessionId;
             const watchedRun = runSeqRef.current;
+            const watchedGeneration = speakGeneration.current;
+            pendingFallback.current = true;
             let attempts = 0;
             const take = () => {
-              if (!props.access.active() || runSeqRef.current !== watchedRun || speechGagged()) return;
+              if (runSeqRef.current !== watchedRun || speakGeneration.current !== watchedGeneration) return;
+              if (!props.access.active() || speechGagged()) { pendingFallback.current = false; return; }
               const text = lastAssistantText(watched);
               const fresh = Boolean(text) && text !== baseline;
               diag('reply_ready', { chars: text.length, fresh, attempt: attempts });
               if (fresh) {
+                coverCurrentTurn();
+                pendingFallback.current = false;
                 replyBefore.current = text;
                 void speak(text);
                 return;
               }
               attempts += 1;
               if (attempts < 10) window.setTimeout(take, 200);
+              else pendingFallback.current = false;
             };
             window.setTimeout(take, 120);
           }
@@ -1873,7 +1994,8 @@ registerProcessor('aura-capture', AuraCapture);`;
 
       /** Release the microphone and every node the capture created. */
       /** Tear down the microphone, the live socket and the meter. */
-      const stopCapture = React.useCallback(() => {
+      const stopCapture = React.useCallback((reason = 'manual-or-cleanup') => {
+        voiceTrace('capture_stop', { reason: typeof reason === 'string' ? reason : 'manual' });
         captureEpoch.current += 1; // Invalidate pending permission/ASR callbacks, too.
         openingRef.current = false;
         const pending = pendingCapture.current;
@@ -1950,15 +2072,15 @@ registerProcessor('aura-capture', AuraCapture);`;
       /** True while getUserMedia is in flight, so one capture can be opened. */
       const openingRef = React.useRef(false);
 
-      const startCapture = React.useCallback(async () => {
+      const startCapture = React.useCallback(async (reuse = null) => {
         if (!props.access.active()) return;
         /* Opening is asynchronous; without this guard a second call slips in
          * before the first has a stream, and two captures fight for the device. */
-        if (liveCapture.current || liveCapture.opening) {
+        if (!reuse && (liveCapture.current || liveCapture.opening)) {
           diag('mic_busy', { live: liveCapture.current ? liveCapture.current.id : 'opening' });
           return;
         }
-        if (openingRef.current || captureRef.current) {
+        if (!reuse && (openingRef.current || captureRef.current)) {
           diag('mic_ignored', { opening: openingRef.current, open: Boolean(captureRef.current) });
           return;
         }
@@ -1967,18 +2089,32 @@ registerProcessor('aura-capture', AuraCapture);`;
         let openedStream = null, openedAudio = null;
         liveCapture.opening = true;
         openingRef.current = true;
-        captureRef.current = null;
+        if (!reuse) captureRef.current = null;
         setError(null);
         setHeard('');
         partialRef.current = { text: '', at: 0 };
         const turn = {
           socket: null, release: null, started: false,
-          heardPlayback: Boolean(voiceRef.current), userSpeech: false,
+          heardPlayback: Boolean(voiceRef.current), userSpeech: false, lastEcho: false, finishing: false, openedAt: Date.now(),
         };
         pendingCapture.current = turn;
 
+        let record = reuse;
+        let queue = reuse?.queue || null;
+        const hold = data => {
+          if (!queue.push(data)) {
+            voiceTrace('buffer_overflow', queue.stats());
+            setError('语音缓冲超过8秒，已停止采集，请重说本句。');
+            choose({ mode: 'talk' });
+            stopCapture('buffer-overflow');
+          }
+        };
+        if (record) record.feed = hold;
         const finishTurn = (reason) => {
-          if (!current()) return;
+          if (!current() || turn.finishing) return;
+          turn.finishing = true;
+          if (record) record.feed = hold;
+          voiceTrace('turn_finish', { reason, ...queue?.stats() });
           diag('turn_finish', { reason });
           /* The clock starts here: waiting for the transcript after "stop" is
            * what can hang, not the length of the utterance. */
@@ -2008,7 +2144,13 @@ registerProcessor('aura-capture', AuraCapture);`;
           turn.socket = socket;
 
           const finalText = new Promise((resolve) => {
-            turn.release = result => { window.clearTimeout(turn.timer); resolve(result); };
+            let settled = false;
+            turn.release = result => {
+              if (settled) return;
+              settled = true; turn.finishing = true;
+              if (record) record.feed = hold;
+              window.clearTimeout(turn.timer); resolve(result);
+            };
             socket.onmessage = (event) => {
               if (!current()) return;
               let message;
@@ -2023,6 +2165,8 @@ registerProcessor('aura-capture', AuraCapture);`;
               }
               if (message.type === 'listen' && message.state === 'start') {
                 turn.started = true;
+                voiceTrace('asr_ready', { degraded: Boolean(message.degraded), waitMs: Date.now() - turn.openedAt, ...queue?.stats() });
+                turn.flush?.();
                 return;
               }
               if (message.type === 'stt') {
@@ -2032,7 +2176,9 @@ registerProcessor('aura-capture', AuraCapture);`;
                   setHeard(text);
                   /* Somebody is saying something we are not: that is an
                    * interruption, and the recognizer is the authority. */
-                  const echo = fromOurVoice(text, spokenRef.current);
+                  const echo = fromOurVoice(text, spokenRef.current.read());
+                  turn.lastEcho = echo;
+                  voiceTrace('echo_decision', { partial: true, echo, chars: text.length, referenceChars: spokenRef.current.read().length });
                   if (voiceRef.current) turn.heardPlayback = true;
                   if (text.trim() && !echo) turn.userSpeech = true;
                   if (voiceRef.current && !echo) {
@@ -2046,7 +2192,9 @@ registerProcessor('aura-capture', AuraCapture);`;
                 }
                 // Do not turn the assistant's own completed speech into a
                 // fresh user message, even if playback ended before the final.
-                const echoOnly = turn.heardPlayback && !turn.userSpeech && fromOurVoice(text, spokenRef.current);
+                const echoOnly = turn.heardPlayback && !turn.userSpeech &&
+                  (fromOurVoice(text, spokenRef.current.read()) || (turn.lastEcho && bare(text) === bare(partialRef.current.text)));
+                voiceTrace('echo_decision', { partial: false, echo: echoOnly, chars: text.length });
                 turn.release({ text: echoOnly ? '' : text });
                 return;
               }
@@ -2080,7 +2228,7 @@ registerProcessor('aura-capture', AuraCapture);`;
            * made the listener voice barely louder than its own echo — 0.09
            * against a 0.10 threshold. Back on, and on by default. */
           const useAec = prefsRef.current.aec !== false;
-          const stream = await media.getUserMedia({
+          const stream = reuse?.stream || await media.getUserMedia({
             audio: {
               channelCount: 1,
               echoCancellation: useAec,
@@ -2092,12 +2240,14 @@ registerProcessor('aura-capture', AuraCapture);`;
           turn.stream = stream;
           if (!current()) { for (const track of stream.getTracks()) track.stop(); socket.close(); return; }
           diag('mic_constraints', { aec: useAec });
-          const audio = new AudioCtor({ sampleRate: SAMPLE_RATE });
+          const audio = reuse?.audio || new AudioCtor({ sampleRate: SAMPLE_RATE });
+          if (audio.sampleRate !== SAMPLE_RATE) throw new Error('Unsupported microphone sample rate: ' + audio.sampleRate);
+          queue = queue || createSampleQueue(audio.sampleRate);
           openedAudio = audio;
           turn.audio = audio;
           const url = URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: 'application/javascript' }));
           try {
-            await audio.audioWorklet.addModule(url);
+            if (!reuse) await audio.audioWorklet.addModule(url);
           } finally {
             URL.revokeObjectURL(url);
           }
@@ -2105,13 +2255,13 @@ registerProcessor('aura-capture', AuraCapture);`;
             for (const track of stream.getTracks()) track.stop();
             void audio.close(); socket.close(); return;
           }
-          const source = audio.createMediaStreamSource(stream);
-          const node = new AudioWorkletNode(audio, 'aura-capture');
-          const sink = audio.createGain();
-          sink.gain.value = 0;
-          source.connect(node);
-          node.connect(sink);
-          sink.connect(audio.destination);
+          const source = reuse?.source || audio.createMediaStreamSource(stream);
+          const node = reuse?.node || new AudioWorkletNode(audio, 'aura-capture');
+          const sink = reuse?.sink || audio.createGain();
+          if (!reuse) {
+            sink.gain.value = 0;
+            source.connect(node); node.connect(sink); sink.connect(audio.destination);
+          }
 
           const vad = createVad({
             /* On a call the microphone stays open until spoken to; the 4 s
@@ -2138,8 +2288,8 @@ registerProcessor('aura-capture', AuraCapture);`;
             },
             onEnd(reason, spoke, ms) {
               diag('capture_end', { reason, ms, speech: spoke });
-              if (reason === 'no_speech') {
-                stopCapture();
+              if (reason === 'no_speech' && prefsRef.current.mode !== 'chat') {
+                stopCapture('no-speech');
                 return;
               }
               finishTurn(reason);
@@ -2154,7 +2304,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               setError(String(result.error));
             } else {
               const text = String(result.text || '').trim();
-              diag('asr', { chars: text.length, empty: text.length === 0, preview: text.slice(0, 40) });
+              diag('asr', { chars: text.length, empty: text.length === 0 });
               if (text) {
                 setHeard(text);
                 accepted = await submitText(text, current);
@@ -2162,43 +2312,44 @@ registerProcessor('aura-capture', AuraCapture);`;
             }
             if (!current()) return;
             if (!accepted) choose({ mode: 'talk' });
-            stopCapture();
-            const stoppedEpoch = captureEpoch.current;
-            /* Continuous mode: after the answer there is no "press to speak"
-             * again; the microphone returns by itself. */
-            if (prefsRef.current.mode === 'chat') {
-              window.setTimeout(() => {
-                if (props.access.active() && captureEpoch.current === stoppedEpoch && prefsRef.current.mode === 'chat' && !captureRef.current) void startCaptureRef.current();
-              }, 400);
-            }
+            if (accepted && !result.error && prefsRef.current.mode === 'chat') {
+              turn.socket.onclose = null;
+              turn.socket.close();
+              voiceTrace('turn_handoff', { id: record.id, sampleSeq: record.sampleSeq, frames: record.frames, ...queue.stats() });
+              void startCaptureRef.current(record);
+            } else stopCapture(result.error ? 'asr-error' : 'turn-end');
           });
 
-          /* The socket needs a round trip before it accepts audio, and the user
-           * may already be speaking: hold the first frames instead of dropping
-           * them, and flush the moment the turn starts. */
-          let handshakeFrames = [];
-          const flushHandshake = () => {
-            if (handshakeFrames.length === 0) return;
-            const held = handshakeFrames;
-            handshakeFrames = [];
-            for (const frame of held) vad.push(frame);
-          };
-
-          node.port.onmessage = (event) => {
-            if (!turn.started) {
-              handshakeFrames.push(event.data);
-              if (handshakeFrames.length > 12) handshakeFrames.shift();
-              return;
+          record = reuse || { id: ++liveCapture.seq, stream, audio, source, node, sink, queue };
+          record.vad = vad; record.socket = socket; record.release = turn.release;
+          const feed = data => {
+            if (!current()) return;
+            if (!turn.started || turn.finishing) hold(data);
+            else {
+              const tail = vad.push(data);
+              if (tail?.length && current()) hold(tail);
             }
-            flushHandshake();
-
-            // Feed every frame exactly once, including during playback. Never
-            // replay a cached head: those samples are already in the ASR stream.
-            vad.push(event.data);
           };
-          liveCapture.seq += 1;
-          const id = liveCapture.seq;
-          const record = { id, stream, audio, source, node, sink, vad, socket, release: turn.release };
+          record.feed = feed;
+          turn.flush = () => {
+            if (!current() || turn.finishing) return;
+            queue.drain(data => {
+              if (turn.finishing) hold(data);
+              else {
+                const tail = vad.push(data);
+                if (tail?.length && current()) hold(tail);
+              }
+            });
+            voiceTrace('buffer_flush', queue.stats());
+          };
+          node.port.onmessage = event => {
+            record.sampleSeq = (record.sampleSeq || 0) + event.data.length;
+            record.frames = (record.frames || 0) + 1;
+            record.feed(event.data);
+          };
+          if (turn.started) turn.flush();
+          if (!current()) return;
+          const id = record.id;
           if (pendingCapture.current === turn) pendingCapture.current = null;
           liveCapture.current = record;
           try {
@@ -2216,6 +2367,7 @@ registerProcessor('aura-capture', AuraCapture);`;
           for (const track of openedStream?.getTracks() || []) track.stop();
           if (openedAudio) void openedAudio.close();
           if (captureEpoch.current !== attempt || !props.access.active()) { turn.socket?.close(); return; }
+          if (reuse) stopCapture('handoff-error');
           openingRef.current = false;
           liveCapture.opening = false;
           choose({ mode: 'talk' });
