@@ -2,7 +2,7 @@
  * dsh-aura — browser half: a presence docked in the right sidebar.
  *
  * The presence owns the state — phase now, voice later — and a form only renders
- * it. Today there is one form, a canvas particle orb, and a form is just
+ * it. A form implements
  * `mount(canvas, readPhase) -> { refresh, dispose }`, so a Live2D model, a
  * digital human or a text pill drops in beside it without touching the state or
  * the tab wiring. The particle sphere is one form, not the product.
@@ -17,7 +17,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     // Each replacement needs its own scope. A top-level const breaks the next
     // classic-script load with a global lexical redeclaration error.
-    const AURA_VERSION = '0.35.3';
+    const AURA_VERSION = '0.35.4-visual.3';
     diag('factory');
     /* A reload replaces this module but not the running audio graph: stop the
      * capture the previous instance left holding the microphone. */
@@ -406,8 +406,8 @@ window.__ModuleLoader__.load({
      * `mount(canvas, readPhase) -> { refresh, dispose }`; adding a form never
      * touches the state above.
      */
+    // Digital-human mode uses one static image, not the legacy face atlas canvas.
     const FORMS = { orb: { mount: mountOrb } };
-    const FORM = 'orb';
 
     /* ---- presence ------------------------------------------------------- */
 
@@ -636,6 +636,7 @@ registerProcessor('aura-capture', AuraCapture);`;
           // A call is live resource state, never a persisted preference.
           // Ignore legacy mode:'chat': no microphone survives a remount/restart.
           mode: 'talk',
+          character: parsed.character === true,
           avatar: typeof parsed.avatar === 'string' ? parsed.avatar : '',
         };
       } catch {
@@ -696,7 +697,7 @@ registerProcessor('aura-capture', AuraCapture);`;
     }
 
     /** The most recent assistant message text in this session, or ''. */
-    function lastAssistantText(sessionId) {
+    function lastAssistantText(sessionId, withEvent = false) {
       const sessions = services && services.get ? services.get('sessions') : null;
       if (!sessions || typeof sessions.binding !== 'function' || !sessionId) return '';
       const binding = sessions.binding(sessionId);
@@ -713,7 +714,7 @@ registerProcessor('aura-capture', AuraCapture);`;
           .map((block) => block.text)
           .join('\n')
           .trim();
-        if (text) return text;
+        if (text) return withEvent ? { text, event } : text;
       }
       return '';
     }
@@ -722,7 +723,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       height: '100%',
       minHeight: 0,
       display: 'grid',
-      gridTemplateRows: 'auto 1fr auto auto',
+      gridTemplateRows: 'auto minmax(0, 1fr) auto auto',
       gap: 10,
       padding: 16,
       boxSizing: 'border-box',
@@ -824,6 +825,25 @@ registerProcessor('aura-capture', AuraCapture);`;
         font: inherit; font-size: 12px; cursor: pointer; opacity: .7; }
       .aura-model[data-on='true'] { opacity: 1; border-color: rgba(255,255,255,.4);
         background: rgba(255,255,255,.12); }
+      /* Only this pane changes its palette; removing the class restores orb/theme. */
+      .aura-character { isolation: isolate; color: #f5f4f6;
+        --dsw-alias-text-primary: #f5f4f6; --dsw-alias-text-secondary: #e4e1e6;
+        --dsw-alias-bg-layer-2: rgba(25,23,29,.28); }
+      .aura-character textarea { background: rgba(25,23,29,.28) !important; color: #f5f4f6 !important; }
+      .aura-character textarea::placeholder { color: #ddd8e0; }
+      .aura-character .aura-id-mono { opacity: .8; text-shadow: 0 1px 3px #222; }
+      /* In the main stage, above the quiet caption. Reserve the call control's
+       * bottom strip; settings (z=6) and the play gesture (z=2) remain above it. */
+      .aura-preparation { align-self: start; box-sizing: border-box; width: 100%;
+        max-width: 420px; max-height: calc(100% - 80px); margin: 8px 0 72px;
+        padding: 14px; display: grid; gap: 10px; overflow: auto; z-index: 1;
+        border-radius: 12px; border: 1px solid var(--dsw-alias-border-l2);
+        border-inline-start: 4px solid var(--dsw-alias-state-warn-primary);
+        background: var(--dsw-alias-bg-overlay); color: var(--dsw-alias-label-primary);
+        font-size: 13px; line-height: 1.6; text-shadow: none; overflow-wrap: anywhere; }
+      .aura-preparation h3 { margin: 0; font-size: 16px; line-height: 1.45; }
+      .aura-preparation p { margin: 0; }
+      .aura-preparation-detail { color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; }
       /* Beside the orb, not in a settings panel: a call is an action. */
       .aura-call { position: absolute; right: 4px; bottom: 4px; width: 52px; height: 52px;
         display: grid; place-items: center; border-radius: 999px; cursor: pointer;
@@ -972,10 +992,16 @@ registerProcessor('aura-capture', AuraCapture);`;
       fontSize: 11,
       cursor: 'pointer',
     };
+    const PREPARATION_STAGES = {
+      preflight: '检查本地环境', tts: '生成当前女声', 'loading-models': '加载口型模型',
+      rendering: '生成口型音画', muxing: '合并本次音画', validating: '校验完整音画',
+      ready: '音画就绪等待播放', '等待音画播放器就绪': '音画就绪等待播放（等待播放器就绪）',
+    };
     const STAGE = {
       width: '100%',
       height: '100%',
-      minHeight: 160,
+      minHeight: 0,
+      minWidth: 0,
       display: 'grid',
       placeItems: 'center',
       position: 'relative',
@@ -983,6 +1009,22 @@ registerProcessor('aura-capture', AuraCapture);`;
     };
     /* No size here: the form writes both CSS sides and the backing store. */
     const CANVAS = { display: 'block' };
+    // Sampled from the approved PNG's empty top/left/right background only.
+    // No enlarged/blurred copy (and thus no second face) behind the subject.
+    const CHARACTER_SURROUND = {
+      position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: -1,
+      display: 'flex', justifyContent: 'center', alignItems: 'flex-start',
+      minHeight: 0, overflow: 'hidden',
+      background: 'linear-gradient(110deg, rgb(64,62,67), rgb(65,62,67) 50%, rgb(68,66,71))',
+    };
+    const CHARACTER_IMAGE = {
+      display: 'block', width: 'auto', height: 'auto',
+      maxWidth: '100%', maxHeight: '100%', minWidth: 0, minHeight: 0,
+      flex: '0 0 auto', objectFit: 'contain', objectPosition: 'center top',
+      // Only the outside 8px blends into sampled colour; never blur hair/face.
+      maskImage: 'linear-gradient(to right, transparent, #000 8px, #000 calc(100% - 8px), transparent), linear-gradient(transparent, #000 8px, #000 calc(100% - 8px), transparent)',
+      maskComposite: 'intersect',
+    };
     const CAPTION = {
       font: 'inherit',
       fontSize: 11,
@@ -1130,16 +1172,35 @@ registerProcessor('aura-capture', AuraCapture);`;
       const [retry, setRetry] = React.useState(0);
       React.useEffect(() => {
         let disposed = false, socket = null, terminal = false;
-        let lastSeen = Date.now(), timeoutMs = 12000;
+        let lastSeen = Date.now(), timeoutMs = 12000, configurationPending = false;
         const listeners = new Set(), summaryListeners = new Set();
+        // Deliberately exclude transport URLs, credentials and CloseEvent.reason.
+        const instanceState = () => ({ sessionId: typeof props.sessionId === 'string' ? props.sessionId : '',
+          readyState: Number.isInteger(socket?.readyState) ? socket.readyState : null,
+          hidden: document.hidden === true });
         const access = {
           onSummary(fn) { summaryListeners.add(fn); return () => summaryListeners.delete(fn); },
           token: '', revoked: true,
           active: () => !disposed && !access.revoked && Date.now() - lastSeen < timeoutMs,
           subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
           revoke() { access.revoked = true; for (const fn of listeners) fn(); },
+          // Config persistence restarts this plugin. Keep its result outside
+          // Pane, which may unmount before the POST acknowledgement arrives.
+          configurationPending() { configurationPending = true; },
+          configurationSaved() {
+            if (disposed) return;
+            configurationPending = false; terminal = true;
+            access.revoke();
+            setState({ kind: 'restart', message: '本地回复生成配置已保存。Aura 已重启，请重新打开 Aura；新状态将在打开设置后读取。' });
+            socket?.close();
+          },
+          configurationFailed(message) {
+            configurationPending = false;
+            if (!disposed && terminal) setState({ kind: 'error', message: `配置保存未确认：${message}。请重新打开 Aura 后核实状态。` });
+          },
         };
         const fail = message => {
+          if (configurationPending) message = '配置保存期间 Aura 连接已断开，保存结果尚未确认。请重新打开 Aura 后核实本地回复生成状态。';
           access.revoke();
           if (!disposed && !terminal) { terminal = true; setState({ kind: 'error', message }); }
         };
@@ -1172,18 +1233,31 @@ registerProcessor('aura-capture', AuraCapture);`;
                 for (const fn of summaryListeners) fn(message);
               }
             };
-            socket.onerror = () => fail('Aura 连接失败，请重新打开。');
-            socket.onclose = () => fail('Aura 连接已断开，通话已结束。后台任务仍独立运行。');
-          } catch (error) { fail(String(error?.message || error)); }
+            socket.onerror = () => {
+              diag('instance_error', instanceState());
+              fail('Aura 连接失败，请重新打开。');
+            };
+            socket.onclose = event => {
+              diag('instance_close', { ...instanceState(),
+                code: Number.isInteger(event?.code) ? event.code : null,
+                wasClean: typeof event?.wasClean === 'boolean' ? event.wasClean : null });
+              fail('Aura 连接已断开，通话已结束。后台任务仍独立运行。');
+            };
+          } catch (error) {
+            diag('instance_error', instanceState());
+            fail(String(error?.message || error));
+          }
         })();
         const timer = window.setInterval(() => {
           if (disposed || terminal) return;
           if (Date.now() - lastSeen >= timeoutMs) {
+            diag('instance_timeout', instanceState());
             fail('Aura 连接超时，通话已结束。请重新打开。');
             socket?.close();
           } else if (socket?.readyState === 1) socket.send('heartbeat');
         }, 1000);
         return () => {
+          diag('instance_cleanup', instanceState());
           disposed = true;
           access.revoke();
           window.clearInterval(timer);
@@ -1200,9 +1274,341 @@ registerProcessor('aura-capture', AuraCapture);`;
         h('p', null, '一个 runtime，一个 Aura。跨会话任务独立执行。'));
     }
 
+    /** One render job per complete reply. The POST receipt is always observed,
+     * even after cancellation, so an accepted-but-late job is DELETEd as well. */
+    function createVisualPreparation({ access, request = fetch, clock = window, onStatus, diagnostic = () => {} }) {
+      let serial = 0, current = null;
+      const remove = (job, reason = 'inactive-access') => {
+        if (!job.id || job.deleted) return;
+        job.deleted = true;
+        diagnostic('visual_cancel', { jobId: job.id, reason: job.cancelReason || reason });
+        void request(`/aura/visual?id=${encodeURIComponent(job.id)}`, {
+          method: 'DELETE', headers: { 'x-aura-instance': access.token }, keepalive: true,
+        }).catch(() => {});
+      };
+      const cancel = (reason = 'explicit-cancel') => {
+        serial++;
+        const job = current; current = null;
+        if (!job) return;
+        job.cancelReason = reason;
+        job.controller.abort();
+        clock.clearTimeout(job.timer);
+        job.wake?.(); job.wake = null;
+        remove(job);
+      };
+      return {
+        cancel,
+        async prepare(body) {
+          cancel('replaced');
+          if (!access.active()) return null;
+          const ticket = serial;
+          const job = { controller: new AbortController(), id: null, timer: 0, deleted: false, phase: 'post' };
+          let pollFailures = 0;
+          current = job;
+          const active = () => current === job && ticket === serial && access.active();
+          const status = value => { if (active()) onStatus(value); };
+          try {
+            status({ state: 'preparing', stage: '提交当前回复', elapsedSeconds: 0 });
+            // Do not abort this small allocation request: observe its id and
+            // revoke a late receipt instead of orphaning expensive inference.
+            let response = await request('/aura/visual', {
+              method: 'POST', headers: { 'content-type': 'application/json', 'x-aura-instance': access.token },
+              body: JSON.stringify(body),
+            });
+            let value = await response.json();
+            job.id = value.id;
+            if (!active()) { remove(job); return null; }
+            for (;;) {
+              if (!response.ok) throw new Error(value.error || '数字人准备请求失败');
+              status(value);
+              if (value.state === 'ready') {
+                if (!value.mediaUrl) throw new Error('数字人结果缺少音画地址');
+                return value;
+              }
+              if (value.state === 'failed' || value.state === 'cancelled') throw new Error(value.error || `数字人任务 ${value.state}`);
+              if (value.state !== 'preparing' || !job.id) throw new Error('数字人准备状态无效');
+              await new Promise(resolve => {
+                job.wake = resolve;
+                job.timer = clock.setTimeout(() => { job.wake = null; resolve(); }, 1000);
+              });
+              if (!active()) { remove(job); return null; }
+              job.phase = 'poll';
+              try {
+                const next = await request(`/aura/visual?id=${encodeURIComponent(job.id)}`, {
+                  headers: { 'x-aura-instance': access.token }, signal: job.controller.signal, cache: 'no-store',
+                });
+                if (next.status >= 500 && next.status <= 599) throw Object.assign(new Error('数字人状态连接暂时中断'), { transient: true });
+                const nextValue = await next.json();
+                response = next; value = nextValue; pollFailures = 0;
+              } catch (error) {
+                if (active() && (error?.name === 'TypeError' || error?.transient) && ++pollFailures <= 3) {
+                  diagnostic('visual_poll_retry', { jobId: job.id, attempt: pollFailures });
+                  status({ ...value, stage: '连接暂时中断，正在重连当前任务' });
+                  continue; // Re-poll the SAME job; never repeat allocation/TTS/inference.
+                }
+                throw error;
+              }
+              if (!active()) { remove(job); return null; }
+            }
+          } catch (error) {
+            remove(job, `${job.phase}-error`);
+            if (!active() || error?.name === 'AbortError') return null;
+            throw error;
+          }
+        },
+      };
+    }
+
+    /** Single-task v3: the SAME ten-second frontal source/element runs through
+     * idle, listening, thinking and preparation. Only a complete muxed answer
+     * may replace it; there is no PCM/energy-driven canned response or mouth patch. */
+    function SingleCharacter({ stage, sessionId, control }) {
+      const surround = React.useRef(null);
+      const still = React.useRef(null);
+      const media = React.useRef(null);
+      const player = React.useRef(null);
+      const [needsPlay, setNeedsPlay] = React.useState(false);
+      const desired = React.useRef(stage);
+      desired.current = stage;
+      React.useEffect(() => {
+        let disposed = false, serial = 0, kind = '', idleTimer = 0, loadTimer = 0;
+        let assetAbort = null, objectUrl = null, frameCallback = 0, downloadTimer = 0;
+        let playCurrent = null, watchReadiness = null, playSerial = 0;
+        let answer = null, lastStage = desired.current;
+        const node = surround.current, image = still.current, video = media.current;
+        const mediaState = () => ({ readyState: video.readyState, networkState: video.networkState,
+          mediaError: video.error?.code || 0, mediaMessage: String(video.error?.message || '').slice(0, 180),
+          paused: video.paused, time: video.currentTime, duration: video.duration,
+          muted: video.muted, volume: video.volume, width: video.videoWidth, height: video.videoHeight,
+          hidden: document.hidden });
+        diag('character_support', { sessionId, protocol: window.location.protocol,
+          h264: video.canPlayType?.('video/mp4; codecs="avc1.64001F"'),
+          vp9: video.canPlayType?.('video/webm; codecs="vp9"') });
+        const idle = () => desired.current === 'idle' && !answer;
+        const clearIdle = () => { window.clearTimeout(idleTimer); idleTimer = 0; };
+        const unload = () => {
+          window.clearTimeout(loadTimer); window.clearTimeout(downloadTimer);
+          downloadTimer = 0; playCurrent = null; watchReadiness = null;
+          assetAbort?.abort(); assetAbort = null;
+          if (frameCallback) video.cancelVideoFrameCallback?.(frameCallback);
+          frameCallback = 0;
+          video.onloadedmetadata = video.onloadeddata = video.oncanplaythrough = video.onplaying = video.onwaiting = video.onpause = video.onended = video.onerror = null;
+          video.pause(); video.removeAttribute('src'); video.load(); video.style.opacity = '0';
+          if (objectUrl) URL.revokeObjectURL(objectUrl);
+          objectUrl = null;
+          if (!disposed) setNeedsPlay(false);
+        };
+        const armIdle = () => {
+          clearIdle();
+          if (!disposed && idle() && kind === 'front') idleTimer = window.setTimeout(() => {
+            idleTimer = 0;
+            if (!disposed && idle() && kind === 'front') show('return');
+          }, 300000);
+        };
+        const finishAnswer = error => {
+          const old = answer; answer = null;
+          if (old) { if (error) old.reject(error); else old.resolve(); }
+        };
+        const showSide = () => {
+          serial++; unload(); kind = 'side';
+          image.src = '/aura/character/side.png'; video.style.opacity = '0';
+          node.dataset.auraClip = kind;
+        };
+        const show = (next, reply = null) => {
+          if (disposed) return;
+          clearIdle();
+          const ticket = ++serial;
+          unload(); kind = next;
+          node.dataset.auraClip = next; node.dataset.auraAudio = 'quiet';
+          video.muted = next !== 'answer'; video.loop = next === 'front';
+          image.src = '/aura/character/short-hair.png';
+          const current = () => !disposed && ticket === serial;
+          const fail = failure => {
+            if (!current()) return;
+            const reason = failure?.type || failure?.name || 'load-timeout';
+            diag('character_fallback', { sessionId, clip: next, reason,
+              message: String(failure?.message || '').slice(0, 180), ...mediaState() });
+            if (next !== 'answer') void fetch(`/aura/character/${next}.mp4`, { method: 'HEAD', cache: 'no-store' })
+              .then(response => diag('character_asset_probe', { sessionId, clip: next,
+                status: response.status, type: response.headers.get('content-type'),
+                length: response.headers.get('content-length'), ranges: response.headers.get('accept-ranges') }))
+              .catch(error => diag('character_asset_probe', { sessionId, clip: next, error: String(error?.message || error).slice(0, 180) }));
+            if (answer) finishAnswer(new Error(`当前回复音画无法播放（${reason}）；未回退到旧视频或独立语音。`));
+            serial++; unload(); video.style.opacity = '0'; kind = 'fallback'; node.dataset.auraClip = kind;
+          };
+          let ready = false, sourceAssigned = false;
+          const play = () => {
+            if (!current() || !ready || document.hidden) return;
+            const attempt = ++playSerial;
+            video.play()?.catch(error => {
+              if (!current() || attempt !== playSerial) return;
+              if (error?.name === 'NotAllowedError') {
+                setNeedsPlay(true);
+                diag('character_gesture_required', { sessionId, clip: next, ...mediaState() });
+              } else fail(error);
+            });
+          };
+          playCurrent = play;
+          watchReadiness = () => {
+            window.clearTimeout(loadTimer);
+            if (current() && sourceAssigned && !ready && !document.hidden) loadTimer = window.setTimeout(() => fail(new Error('视频解码就绪超时')), 15000);
+          };
+          video.onloadeddata = () => {
+            if (!current()) return;
+            diag('character_decoded', { sessionId, clip: next, ...mediaState() });
+            if (next !== 'answer') { ready = true; window.clearTimeout(loadTimer); play(); }
+          };
+          // The Host has already finished muxing the full AV file. Wait for
+          // decoder readiness too; never start a second independent audio clock.
+          video.oncanplaythrough = next === 'answer' ? () => {
+            if (!current()) return;
+            ready = true; window.clearTimeout(loadTimer); play();
+          } : null;
+          video.onplaying = () => {
+            if (!current()) return;
+            window.clearTimeout(loadTimer); video.style.opacity = '1'; setNeedsPlay(false);
+            if (next === 'answer') { node.dataset.auraAudio = 'playing'; answer?.onPlaying?.(); }
+            diag('character_clip', { sessionId, clip: next, ...mediaState() });
+            if (!frameCallback && video.requestVideoFrameCallback) {
+              let frames = 0;
+              const observe = (_now, metadata) => {
+                frameCallback = 0;
+                if (!current()) return;
+                diag('character_frame', { sessionId, clip: next, mediaTime: metadata.mediaTime,
+                  presentedFrames: metadata.presentedFrames, ...mediaState() });
+                if (++frames < 3) frameCallback = video.requestVideoFrameCallback(observe);
+              };
+              frameCallback = video.requestVideoFrameCallback(observe);
+            }
+          };
+          video.onwaiting = video.onpause = () => {
+            if (!current() || next !== 'answer') return;
+            node.dataset.auraAudio = 'quiet'; answer?.onWaiting?.();
+          };
+          video.onended = () => {
+            if (!current()) return;
+            if (next === 'answer') { finishAnswer(); show('front'); armIdle(); }
+            else if (next === 'return' && idle()) showSide();
+            else if (next === 'turn' && answer) show('answer', answer);
+            else { show('front'); armIdle(); }
+          };
+          video.onerror = fail;
+          // Answer loading has honest preparation UI, not a fake 5s success.
+          const source = next === 'answer' ? reply.mediaUrl : `/aura/character/${next}.mp4`;
+          if (window.location.protocol === 'dsh-app:') {
+            // Desktop's custom-protocol media loader cannot open these MP4s,
+            // although the same authenticated fetch succeeds. Hand the one
+            // video element a bounded, complete Blob instead. No second clock.
+            assetAbort = new AbortController();
+            const controller = assetAbort, signal = controller.signal;
+            const deadline = downloadTimer = window.setTimeout(() => {
+              if (!current()) return;
+              controller.abort(); fail(new Error('视频读取超时'));
+            }, 15000);
+            void (async () => {
+              const response = await fetch(source, { signal, credentials: 'same-origin' });
+              if (!response.ok) throw new Error(`视频读取失败（HTTP ${response.status}）`);
+              const type = response.headers.get('content-type')?.split(';')[0];
+              if (type !== 'video/mp4') throw new Error('视频响应不是 MP4');
+              const limit = (next === 'answer' ? 64 : 8) * 1024 * 1024;
+              if (Number(response.headers.get('content-length')) > limit) throw new Error('视频超过本地播放大小上限');
+              const reader = response.body.getReader(), chunks = []; let bytes = 0;
+              try {
+                for (;;) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  bytes += value.byteLength;
+                  if (signal.aborted || !current()) throw new Error('视频加载已取消');
+                  if (bytes > limit) throw new Error('视频超过本地播放大小上限');
+                  chunks.push(value);
+                }
+              } finally { if (!current() || bytes > limit || signal.aborted) await reader.cancel().catch(() => {}); reader.releaseLock(); }
+              if (!current() || signal.aborted) return;
+              objectUrl = URL.createObjectURL(new Blob(chunks, { type: 'video/mp4' }));
+              sourceAssigned = true; video.src = objectUrl; video.load(); watchReadiness?.();
+              diag('character_asset_loaded', { sessionId, clip: next, bytes, transport: 'authenticated-blob' });
+            })().catch(fail).finally(() => {
+              window.clearTimeout(deadline);
+              if (downloadTimer === deadline) downloadTimer = 0;
+            });
+          } else { sourceAssigned = true; video.src = source; video.load(); watchReadiness(); }
+          if (next === 'front') armIdle();
+        };
+        const sync = () => {
+          if (disposed) return;
+          node.dataset.auraState = desired.current;
+          if (lastStage !== desired.current) {
+            lastStage = desired.current; clearIdle();
+            if (idle()) armIdle();
+          }
+          // A sideways interaction turns completely; state changes never skip
+          // turn.mp4. Microphone capture is independently started by Pane.
+          if (!idle() && (kind === 'side' || kind === 'return')) show('turn');
+          else if (!kind) show('front');
+        };
+        const visibility = () => {
+          if (document.hidden) { playSerial++; window.clearTimeout(loadTimer); video.pause(); }
+          else if (kind !== 'side' && kind !== 'fallback') { watchReadiness?.(); playCurrent?.(); }
+        };
+        const api = {
+          sync,
+          activity() { clearIdle(); if (idle()) armIdle(); },
+          playReply(reply) {
+            if (disposed || reply.sessionId !== sessionId) return Promise.reject(new Error('数字人会话已失效'));
+            finishAnswer(new Error('数字人回复被替换'));
+            clearIdle();
+            return new Promise((resolve, reject) => {
+              answer = { ...reply, resolve, reject };
+              if (kind === 'turn') return; // Complete the existing turn first.
+              if (kind === 'side' || kind === 'return') show('turn');
+              else show('answer', answer);
+            });
+          },
+          resume() { if (!disposed) playCurrent?.(); },
+          clear() {
+            if (disposed) return;
+            finishAnswer(new Error('数字人回复已取消'));
+            node.dataset.auraAudio = 'quiet';
+            if (kind === 'answer') show('front');
+            armIdle();
+          },
+        };
+        player.current = control.current = api;
+        document.addEventListener('visibilitychange', visibility);
+        sync();
+        return () => {
+          disposed = true; serial++; clearIdle(); finishAnswer(new Error('数字人播放器已关闭')); unload();
+          document.removeEventListener('visibilitychange', visibility);
+          if (control.current === api) control.current = null;
+          player.current = null;
+        };
+      }, [sessionId, control]);
+      React.useEffect(() => { player.current?.sync(); }, [stage]);
+      const layer = { ...CHARACTER_IMAGE, position: 'absolute', inset: 0,
+        width: '100%', height: '100%', maxWidth: '100%', maxHeight: '100%', maskImage: 'none' };
+      const mediaBox = { position: 'relative', flex: '0 0 auto',
+        width: 'min(100cqw, calc(100cqh * 1113 / 1414))',
+        height: 'min(100cqh, calc(100cqw * 1414 / 1113))',
+        maskImage: CHARACTER_IMAGE.maskImage, maskComposite: CHARACTER_IMAGE.maskComposite };
+      return h(React.Fragment, null, h('div', { ref: surround, style: { ...CHARACTER_SURROUND, containerType: 'size' },
+        'data-aura-visual': 'single-character', 'data-aura-state': stage,
+        'data-aura-clip': 'front', 'data-aura-audio': 'quiet' },
+        h('div', { style: mediaBox, 'data-aura-media-box': true },
+          h('img', { ref: still, src: '/aura/character/short-hair.png', style: layer,
+            alt: 'Aura · 正面待机；10 秒循环接缝可能可见', draggable: false }),
+          h('video', { ref: media, style: { ...layer, opacity: 0 }, muted: true,
+            playsInline: true, preload: 'auto', 'aria-hidden': true }))),
+        needsPlay ? h('button', { type: 'button', 'data-aura-play': true, onClick: () => player.current?.resume(),
+          style: { position: 'absolute', top: '55%', left: '50%', transform: 'translate(-50%, -50%)',
+            pointerEvents: 'auto', zIndex: 2, padding: '10px 16px', borderRadius: 8, cursor: 'pointer',
+            color: '#fff', background: '#222', border: '1px solid #888' } }, '点击播放音画') : null);
+    }
+
     /** The tab body: one presence plus a composer that drives this session. */
     function Pane(props) {
-      const form = FORMS[FORM] || FORMS.orb;
+      const [prefs, setPrefs] = React.useState(readPrefs);
+      // Static portrait and particle canvas are mutually exclusive visual layers.
+      const form = prefs.character ? null : FORMS.orb;
       const useStatus = props.useSessionStatus || (() => undefined);
       // This Hook exposes every session, including other windows and workers.
       // Only this pane's identity may drive its reply completion and playback.
@@ -1224,6 +1630,26 @@ registerProcessor('aura-capture', AuraCapture);`;
        * the mode before the preference state is declared. */
       const modeRef = React.useRef('talk');
       const [talking, setTalking] = React.useState(false);
+      const [singleStage, setSingleStage] = React.useState('idle');
+      const characterControl = React.useRef(null);
+      const [visualStatus, setVisualStatus] = React.useState(null);
+      const [preparationSeconds, setPreparationSeconds] = React.useState(0);
+      const visualPreparation = React.useRef(null);
+      const visualStarted = React.useRef(0);
+      const visualBusy = React.useRef(false);
+      const pendingTaskIds = React.useRef(new Set());
+      const [pendingTaskCount, setPendingTaskCount] = React.useState(0);
+      const dispatchedTurns = React.useRef(new Set());
+      const summaryTurns = React.useRef(new Set());
+      const completedTaskIds = React.useRef(new Set());
+      const singleSpokenTurns = React.useRef(new Set());
+      const singleCharacterMode = () => prefsRef.current.character && modeRef.current === 'talk';
+      React.useEffect(() => {
+        if (!visualStatus || visualStatus.state !== 'preparing') return;
+        const tick = () => setPreparationSeconds(Math.floor((Date.now() - visualStarted.current) / 1000));
+        tick(); const timer = window.setInterval(tick, 1000);
+        return () => window.clearInterval(timer);
+      }, [visualStatus?.state]);
 
       React.useEffect(() => {
         if (!settledAt) {
@@ -1258,13 +1684,19 @@ registerProcessor('aura-capture', AuraCapture);`;
 
       const canvasRef = React.useRef(null);
       const phaseRef = React.useRef(phase);
-      phaseRef.current = phase;
+      // Continuous capture remains live during playback; display the active speaker.
+      let visualPhase = phase;
+      if (prefs.character && talking) visualPhase = 'talking';
+      else if (prefs.character && running) visualPhase = 'running';
+      phaseRef.current = visualPhase;
       const formRef = React.useRef(null);
+      const gestureRef = React.useRef(0);
+      const toneRef = React.useRef(0);
 
       React.useEffect(() => {
         const canvas = canvasRef.current;
-        if (!canvas) return undefined;
-        const instance = form.mount(canvas, () => ({ phase: phaseRef.current, level: levelRef.current }));
+        if (!canvas || !form) return undefined;
+        const instance = form.mount(canvas, () => ({ phase: phaseRef.current, level: levelRef.current, tone: toneRef.current, gesture: gestureRef.current }));
         formRef.current = instance;
         window.requestAnimationFrame(() => {
           diag('mounted', {
@@ -1280,11 +1712,11 @@ registerProcessor('aura-capture', AuraCapture);`;
           formRef.current = null;
           instance.dispose();
         };
-      }, []);
+      }, [form]);
 
       React.useEffect(() => {
         if (formRef.current) formRef.current.refresh();
-      }, [phase]);
+      }, [visualPhase]);
 
       const [draft, setDraft] = React.useState('');
       const draftRef = React.useRef(null);
@@ -1303,9 +1735,48 @@ registerProcessor('aura-capture', AuraCapture);`;
       const [busy, setBusy] = React.useState(false);
       const [transcribing, setTranscribing] = React.useState(false);
       const [heard, setHeard] = React.useState('');
-      const [prefs, setPrefs] = React.useState(readPrefs);
       modeRef.current = prefs.mode || 'talk';
       const [panelOpen, setPanelOpen] = React.useState(false);
+      const [visualConfig, setVisualConfig] = React.useState(null);
+      const [visualConfigAvailable, setVisualConfigAvailable] = React.useState(false);
+      const [visualConfigRequest, setVisualConfigRequest] = React.useState(null);
+      const [visualConfigError, setVisualConfigError] = React.useState('');
+      const configRequestRef = React.useRef(null);
+      const configLoadAbort = React.useRef(null);
+      const configMounted = React.useRef(true);
+      React.useEffect(() => {
+        configMounted.current = true;
+        return () => { configMounted.current = false; configLoadAbort.current?.abort(); };
+      }, []);
+      const refreshVisualConfig = React.useCallback(async () => {
+        if (configRequestRef.current === 'post' || !props.access.active()) return;
+        configLoadAbort.current?.abort();
+        const controller = new AbortController();
+        configLoadAbort.current = controller;
+        configRequestRef.current = 'get'; setVisualConfigRequest('get'); setVisualConfigError('');
+        const current = () => configMounted.current && configLoadAbort.current === controller && !controller.signal.aborted && props.access.active();
+        try {
+          const response = await fetch('/aura/visual/config', { method: 'GET', cache: 'no-store',
+            headers: { 'x-aura-instance': props.access.token }, signal: controller.signal });
+          const value = await response.json();
+          if (!response.ok) throw new Error(value?.error || `读取状态失败（${response.status}）`);
+          if (!value || typeof value.version !== 'string' || typeof value.enabled !== 'boolean' || typeof value.editable !== 'boolean'
+            || (value.reason !== undefined && typeof value.reason !== 'string')) throw new Error('配置状态响应无效，请更新 Host 后重试。');
+          if (current()) { setVisualConfig(value); setVisualConfigAvailable(true); }
+        } catch (failure) {
+          if (current()) { setVisualConfigAvailable(false); setVisualConfigError(String(failure?.message || failure)); }
+        } finally {
+          if (configLoadAbort.current === controller) {
+            configLoadAbort.current = null; configRequestRef.current = null;
+            if (configMounted.current) setVisualConfigRequest(null);
+          }
+        }
+      }, [props.access]);
+      React.useEffect(() => {
+        if (!panelOpen) return;
+        void refreshVisualConfig();
+        return () => configLoadAbort.current?.abort();
+      }, [panelOpen, refreshVisualConfig]);
       const [customVoice, setCustomVoice] = React.useState('');
       const paneRef = React.useRef(null);
       const prefsRef = React.useRef(prefs);
@@ -1470,6 +1941,7 @@ registerProcessor('aura-capture', AuraCapture);`;
        * ends, so the text from before this turn is captured and the new one is
        * whatever differs from it. */
       const replyBefore = React.useRef('');
+      const replyBeforeSeq = React.useRef(-1);
 
       /** Stop playback and let the sphere settle. */
       /**
@@ -1492,6 +1964,11 @@ registerProcessor('aura-capture', AuraCapture);`;
           taskSpeechEnabled.current = false;
           silencedThrough.current = Math.max(silencedThrough.current, observedTurn.current);
           speakGeneration.current += 1;
+          visualPreparation.current?.cancel(options.reason || 'explicit-stop');
+          visualBusy.current = false;
+          setVisualStatus(null);
+          speakQueue.current = Promise.resolve();
+          speechBuffer.current = '';
           const abort = speechAbort.current;
           speechAbort.current = null;
           if (abort) {
@@ -1506,6 +1983,12 @@ registerProcessor('aura-capture', AuraCapture);`;
         const playback = voiceRef.current;
         voiceRef.current = null;
         levelRef.current = 0;
+        if (cancel) characterControl.current?.clear();
+        if (modeRef.current === 'talk' && (cancel || !runningRef.current)) {
+          // Stopping an old answer must not send a newly opened microphone back
+          // to idle (including barge-in partials before this utterance is final).
+          setSingleStage(captureRef.current || pendingCapture.current ? 'listening' : 'idle');
+        }
         setTalking(false);
         gateRef.current.active = false;
         gateRef.current.until = options.echoTail === false ? 0 : Date.now() + 150;
@@ -1549,7 +2032,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       const speechAbort = React.useRef(null);
 
       const speakNow = React.useCallback(
-        async (text, voice, generation) => {
+        async (text, voice, generation, taskId) => {
           const spoken = speechText(text);
           if (!spoken) {
             diag('speak_skipped', { chars: String(text || '').length });
@@ -1560,9 +2043,57 @@ registerProcessor('aura-capture', AuraCapture);`;
             diag('speak_gagged', { chars: spoken.length, run: runSeqRef.current });
             return;
           }
+          if (singleCharacterMode()) {
+            let visualOutcome = 'preparation-inactive';
+            try {
+              const replyVoice = voice || prefsRef.current.voice;
+              const replyModel = prefsRef.current.model || MODELS[0].id;
+              if (replyModel !== 'cosyvoice-v3-flash' || !VOICES.some(item => item.id === replyVoice && item.trait.endsWith('女'))) {
+                throw new Error('单句数字人需要女声音色和 CosyVoice 3.0 Flash（非 3.5）。请打开 Aura 设置，选择龙颜/龙婉等已列出的女声及 3.0；不会自动换声。任务执行不受影响，回复文本可在会话中查看。');
+              }
+              visualBusy.current = true;
+              visualStarted.current = Date.now();
+              setPreparationSeconds(0);
+              setSingleStage('prepare');
+              if (!visualPreparation.current) visualPreparation.current = createVisualPreparation({
+                access: props.access, onStatus: setVisualStatus, diagnostic: diag,
+              });
+              const ready = await visualPreparation.current.prepare({
+                text: spoken, voice: replyVoice, model: replyModel,
+                taskId: taskId || `${props.sessionId}:turn:${runSeqRef.current}`,
+                sessionId: props.sessionId,
+              });
+              const current = () => props.access.active() && generation === speakGeneration.current && !speechGagged() && singleCharacterMode();
+              if (!ready || !current()) return;
+              setVisualStatus({ ...ready, state: 'preparing', stage: '等待音画播放器就绪' });
+              const player = characterControl.current;
+              if (!player) throw new Error('数字人播放器不可用');
+              await player.playReply({ mediaUrl: ready.mediaUrl, sessionId: props.sessionId,
+                onPlaying() { if (current()) { setTalking(true); setSingleStage('speaking'); setVisualStatus(null); } },
+                onWaiting() { if (current()) { setTalking(false); setSingleStage('prepare');
+                  setVisualStatus({ state: 'preparing', stage: '音画缓冲', elapsedSeconds: 0 }); } },
+              });
+              visualOutcome = 'playback-ended';
+              if (current()) stopSpeaking({ abort: false });
+            } catch (failure) {
+              visualOutcome = 'preparation-or-playback-error';
+              diag('visual_error', { sessionId: props.sessionId, reason: failure?.name || 'Error' });
+              if (!props.access.active() || generation !== speakGeneration.current) return;
+              setError(String(failure?.message || failure));
+              stopSpeaking({ abort: false });
+            } finally {
+              if (generation === speakGeneration.current) {
+                visualPreparation.current?.cancel(visualOutcome);
+                visualBusy.current = false;
+                setVisualStatus(null);
+              }
+            }
+            return;
+          }
+          let requestController;
           try {
             diag('tts_request', { chars: spoken.length });
-            const controller = new AbortController();
+            const controller = requestController = new AbortController();
             speechAbort.current = controller;
             const response = await fetch('/aura/tts', {
               method: 'POST',
@@ -1622,6 +2153,14 @@ registerProcessor('aura-capture', AuraCapture);`;
                 sum += value * value;
               }
               levelRef.current = Math.min(1, Math.sqrt(sum / data.length) * 2.6);
+              if (prefsRef.current.character) {
+                let crossings = 0;
+                for (let i = 1; i < data.length; i++) {
+                  if ((data[i] >= 128) !== (data[i - 1] >= 128)) crossings++;
+                }
+                const hz = crossings * audio.sampleRate / (2 * data.length);
+                toneRef.current = hz < 420 ? 1 : hz > 1300 ? 2 : 0;
+              }
               playback.frame = window.requestAnimationFrame(meter);
             };
 
@@ -1656,6 +2195,11 @@ registerProcessor('aura-capture', AuraCapture);`;
               source.start(start);
               playback.at = start + samples.length / rate;
               spokenRef.current.add(audio, start, playback.at, spoken, runSeqRef.current);
+              // Pass the actual scheduled PCM clock, never setTalking's early
+              // network intent. Phase one intentionally has no synthetic lips.
+              characterControl.current?.schedule({ audio, start, end: playback.at,
+                pcm: samples, rate, sessionId: props.sessionId, generation });
+              if (modeRef.current === 'talk') setSingleStage('speaking');
               voiceTrace('play_span', { turn: runSeqRef.current, start, end: playback.at, chars: spoken.length });
             };
 
@@ -1710,16 +2254,18 @@ registerProcessor('aura-capture', AuraCapture);`;
             diag('tts_error', { message: String((failure && failure.message) || failure).slice(0, 200) });
             setError(String((failure && failure.message) || failure));
             stopSpeaking({ abort: false });
+          } finally {
+            if (speechAbort.current === requestController) speechAbort.current = null;
           }
         },
         [stopSpeaking],
       );
 
       const speak = React.useCallback(
-        (text, voice) => {
+        (text, voice, taskId) => {
           const generation = speakGeneration.current;
           speakQueue.current = speakQueue.current
-            .then(() => speakNow(text, voice, generation))
+            .then(() => speakNow(text, voice, generation, taskId))
             .catch(() => {});
           return speakQueue.current;
         },
@@ -1728,6 +2274,12 @@ registerProcessor('aura-capture', AuraCapture);`;
 
 
 
+      React.useEffect(() => {
+        if (!prefs.character || prefs.mode === 'chat') {
+          if (visualBusy.current) stopSpeaking({ reason: 'mode-change' });
+        }
+      }, [prefs.character, prefs.mode, stopSpeaking]);
+
       // Task completion is a separate, final-text-only channel. It never arms
       // the foreground stream, prompts a model, or survives a closed pane.
       React.useEffect(() => {
@@ -1735,12 +2287,26 @@ registerProcessor('aura-capture', AuraCapture);`;
           if (summarySeen.current.has(message.key)) return;
           summarySeen.current.add(message.key);
           if (summarySeen.current.size > 256) summarySeen.current.delete(summarySeen.current.values().next().value);
-          // The normal answer path already owns this turn, including idle's
-          // delayed fallback. Do not read the same reply a second time.
-          if (!taskSpeechEnabled.current || speakNext.current || message.turn <= silencedThrough.current || coveredTurns.current.has(message.turn) || speechGagged()) return;
-          const text = speechText(message.text).slice(0, 360);
+          const single = singleCharacterMode();
+          const taskIds = [...new Set([message.taskId, ...(Array.isArray(message.taskIds) ? message.taskIds : [])]
+            .filter(id => typeof id === 'string' && id.length > 0))];
+          // A summary may settle several children at once. Its render identity
+          // is the native child only for exactly one child, otherwise the stable
+          // summary key. Never guess a child from unrelated pending work.
+          const taskId = taskIds.length === 1 ? taskIds[0] : message.key;
+          if (single) {
+            summaryTurns.current.add(message.turn);
+            for (const id of taskIds) { pendingTaskIds.current.delete(id); completedTaskIds.current.add(id); }
+            setPendingTaskCount(pendingTaskIds.current.size);
+          }
+          // Single mode suppresses dispatch acknowledgement, not execution or
+          // completion. A fast completion can arrive before its foreground ends.
+          if ((single && singleSpokenTurns.current.has(message.turn)) || !taskSpeechEnabled.current || (!single && speakNext.current) || message.turn <= silencedThrough.current
+            || (!single && coveredTurns.current.has(message.turn)) || speechGagged()) return;
+          const text = single ? speechText(message.text) : speechText(message.text).slice(0, 360);
           if (!text) return;
-          taskSummaries.current.push({ ...message, text, generation: speakGeneration.current, at: Date.now() });
+          if (single) singleSpokenTurns.current.add(message.turn);
+          taskSummaries.current.push({ ...message, taskId, text, generation: speakGeneration.current, at: Date.now() });
           taskSummaries.current = taskSummaries.current.slice(-8);
         });
         const timer = window.setInterval(() => {
@@ -1748,11 +2314,11 @@ registerProcessor('aura-capture', AuraCapture);`;
           // Foreground/user audio always wins. Cancellation clears the queue;
           // late delivery cannot resume old audio after a hangup or interruption.
           if (runningRef.current || speakNext.current || pendingFallback.current || voiceRef.current
-            || pendingCapture.current || Date.now() - partialRef.current.at < 1500) return;
+            || visualBusy.current || pendingCapture.current || Date.now() - partialRef.current.at < 1500) return;
           const next = taskSummaries.current.shift();
-          if (!next || next.generation !== speakGeneration.current || Date.now() - next.at > 30000
-            || coveredTurns.current.has(next.turn) || speechGagged()) return;
-          void speak(next.text);
+          if (!next || next.generation !== speakGeneration.current
+            || (!singleCharacterMode() && (Date.now() - next.at > 30000 || coveredTurns.current.has(next.turn))) || speechGagged()) return;
+          void speak(next.text, undefined, next.taskId);
         }, 150);
         return () => { off(); window.clearInterval(timer); taskSummaries.current = []; };
       }, [props.sessionId, speak]);
@@ -1779,6 +2345,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         (text) => {
           if (!speakNext.current || !text) return;
           speechBuffer.current += text;
+          if (singleCharacterMode()) return; // Whole final reply: one TTS/render job, not one per sentence.
           for (;;) {
             const boundary = boundaryIn(speechBuffer.current);
             if (boundary < 0) return;
@@ -1800,8 +2367,10 @@ registerProcessor('aura-capture', AuraCapture);`;
         const source = binding && binding.eventSource;
         if (!source || typeof source.subscribe !== 'function') return undefined;
 
-        let seen = 0;
+        let seen = 0, toolSeen = 0;
+        const taskCalls = new Map(), acceptedDispatchTurns = new Set();
         for (const entry of source.getSnapshot?.().entries || []) {
+          if (entry.event?.type === 'tool/call' || entry.event?.type === 'tool/result') toolSeen = Math.max(toolSeen, entry.event.seq || 0);
           if (entry.event?.type === 'assistant/live-chunk') seen = Math.max(seen, entry.event.seq || 0);
         }
         const onSnapshot = () => {
@@ -1813,6 +2382,32 @@ registerProcessor('aura-capture', AuraCapture);`;
             if ((speakNext.current || speechGagged()) && Number.isInteger(event?.data?.turn)) {
               coveredTurns.current.add(event.data.turn);
               if (coveredTurns.current.size > 256) coveredTurns.current.delete(coveredTurns.current.values().next().value);
+            }
+            if (event && event.seq > toolSeen && (event.type === 'tool/call' || event.type === 'tool/result')) {
+              if (event.type === 'tool/call' && event.data.name === 'aura_task') {
+                taskCalls.set(event.data.callId, event.data.turn);
+                dispatchedTurns.current.add(event.data.turn);
+              }
+              if (event.type === 'tool/result' && taskCalls.has(event.data.message?.toolCallId)) {
+                const dispatchTurn = taskCalls.get(event.data.message.toolCallId);
+                taskCalls.delete(event.data.message.toolCallId);
+                let accepted = false;
+                try {
+                  const receipt = JSON.parse(event.data.message.content.filter(b => b.type === 'text').map(b => b.text).join('\n'));
+                  if (receipt.status === 'dispatched' && typeof receipt.sessionId === 'string') {
+                    accepted = true;
+                    acceptedDispatchTurns.add(dispatchTurn);
+                    if (!completedTaskIds.current.has(receipt.sessionId)) pendingTaskIds.current.add(receipt.sessionId);
+                    setPendingTaskCount(pendingTaskIds.current.size);
+                  }
+                } catch { /* Not a dispatch receipt: never invent a native task id. */ }
+                // Only an entirely rejected turn may speak its final failure.
+                // Another call in the same turn can still be pending or accepted.
+                if (!accepted && !acceptedDispatchTurns.has(dispatchTurn) && ![...taskCalls.values()].includes(dispatchTurn)) {
+                  dispatchedTurns.current.delete(dispatchTurn);
+                }
+              }
+              toolSeen = Math.max(toolSeen, event.seq);
             }
             if (!event || event.type !== 'assistant/live-chunk') continue;
             const seq = typeof event.seq === 'number' ? event.seq : 0;
@@ -1857,12 +2452,22 @@ registerProcessor('aura-capture', AuraCapture);`;
             return;
           }
           if (speakNext.current) {
+            const latestTurn = observedTurn.current;
+            if (singleCharacterMode() && (dispatchedTurns.current.has(latestTurn) || summaryTurns.current.has(latestTurn))) {
+              armSpeak(false); speechBuffer.current = ''; spokeAny.current = false;
+              setSingleStage(pendingTaskIds.current.size ? 'waiting' : 'idle');
+              wasRunning.current = running;
+              return;
+            }
             coverCurrentTurn();
             armSpeak(false);
             /* Whatever the stream left unfinished is the last sentence. */
-            const tail = speechBuffer.current.trim();
+            // Single mode speaks the completed durable answer, not draft/live
+            // chunks that may span tool steps or differ from the final text.
+            const tail = singleCharacterMode() ? '' : speechBuffer.current.trim();
             speechBuffer.current = '';
             if (tail) {
+              if (singleCharacterMode()) singleSpokenTurns.current.add(observedTurn.current);
               spokeAny.current = true;
               void speak(tail);
             }
@@ -1876,6 +2481,7 @@ registerProcessor('aura-capture', AuraCapture);`;
              * briefly, because the new message can land a moment after the run
              * flips to idle, and speaking the previous reply is worse. */
             const baseline = replyBefore.current;
+            const baselineSeq = replyBeforeSeq.current;
             const watched = props.sessionId;
             const watchedRun = runSeqRef.current;
             const watchedGeneration = speakGeneration.current;
@@ -1884,13 +2490,19 @@ registerProcessor('aura-capture', AuraCapture);`;
             const take = () => {
               if (runSeqRef.current !== watchedRun || speakGeneration.current !== watchedGeneration) return;
               if (!props.access.active() || speechGagged()) { pendingFallback.current = false; return; }
-              const text = lastAssistantText(watched);
-              const fresh = Boolean(text) && text !== baseline;
+              if (singleCharacterMode() && (summaryTurns.current.has(observedTurn.current) || dispatchedTurns.current.has(observedTurn.current))) {
+                pendingFallback.current = false; return;
+              }
+              const completed = singleCharacterMode() ? lastAssistantText(watched, true) : null;
+              const text = completed ? completed.text : lastAssistantText(watched);
+              const fresh = Boolean(text) && (completed && Number.isInteger(completed.event.seq)
+                ? completed.event.seq > baselineSeq : text !== baseline);
               diag('reply_ready', { chars: text.length, fresh, attempt: attempts });
               if (fresh) {
                 coverCurrentTurn();
                 pendingFallback.current = false;
                 replyBefore.current = text;
+                if (singleCharacterMode()) singleSpokenTurns.current.add(observedTurn.current);
                 void speak(text);
                 return;
               }
@@ -1904,11 +2516,24 @@ registerProcessor('aura-capture', AuraCapture);`;
         wasRunning.current = running;
       }, [running, props.sessionId, speak]);
 
+      // Silent replies / foreground acceptance may have no PCM end callback.
+      // Independent task results can wake the character later through playReply.
+      React.useEffect(() => {
+        if (modeRef.current !== 'talk' || !['waiting', 'speaking'].includes(singleStage)) return;
+        const since = Date.now();
+        const timer = window.setInterval(() => {
+          if (Date.now() - since < 1500 || runningRef.current || voiceRef.current
+            || speakNext.current || pendingFallback.current || visualBusy.current || pendingTaskIds.current.size) return;
+          setSingleStage('idle');
+        }, 250);
+        return () => window.clearInterval(timer);
+      }, [singleStage]);
+
       /** Send one message into the session this pane belongs to. */
       const submitText = React.useCallback(
         async (text, stillCurrent = () => true) => {
           const trimmed = String(text || '').trim();
-          if (!trimmed || !props.access.active() || !stillCurrent()) return false;
+          if (!trimmed || configRequestRef.current === 'post' || !props.access.active() || !stillCurrent()) return false;
           const session = bindSession(props.sessionId);
           if (!session) {
             setError('No live session for this pane.');
@@ -1919,7 +2544,9 @@ registerProcessor('aura-capture', AuraCapture);`;
           let step = 'enable';
           try {
             if (runningRef.current) gaggedRef.current = runSeqRef.current;
-            stopSpeaking();
+            stopSpeaking({ reason: 'new-submit' });
+            characterControl.current?.activity();
+            if (modeRef.current === 'talk') setSingleStage('waiting');
             // Native authenticated commands scope the foreground and cancel only
             // its obsolete turn. Published managed tasks have separate owners.
             const command = async line => {
@@ -1938,6 +2565,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             // Arm BEFORE publication: a fast answer may arrive before the RPC
             // acknowledges the prompt. Never use that new answer as baseline.
             replyBefore.current = lastAssistantText(props.sessionId);
+            replyBeforeSeq.current = lastAssistantText(props.sessionId, true)?.event?.seq ?? -1;
             gaggedRef.current = -1;
             armSpeak(true);
             diag('submit_mode', { sessionId: props.sessionId, mode });
@@ -1965,7 +2593,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       }, [draft, busy, submitText]);
 
       const stop = React.useCallback(async () => {
-        stopSpeaking();
+        stopSpeaking({ reason: 'stop-button' });
         const session = bindSession(props.sessionId);
         if (!session) {
           setError('No live session for this pane.');
@@ -2018,6 +2646,7 @@ registerProcessor('aura-capture', AuraCapture);`;
           /* private mode */
         }
         setListening(false);
+        if (modeRef.current === 'talk' && reason !== 'single-final') setSingleStage('idle');
         if (!capture) {
           diag('mic_stop_empty');
           return;
@@ -2053,13 +2682,13 @@ registerProcessor('aura-capture', AuraCapture);`;
       }, []);
 
       React.useEffect(() => {
-        const deactivate = () => {
+        const deactivate = (reason = 'ownership-revoked') => {
           armSpeak(false);
           stopCapture();
-          stopSpeaking();
+          stopSpeaking({ reason });
         };
         const unsubscribe = props.access.subscribe(deactivate);
-        return () => { unsubscribe(); deactivate(); };
+        return () => { unsubscribe(); deactivate('pane-cleanup'); };
       }, [props.access, stopCapture, stopSpeaking]);
 
       /**
@@ -2073,7 +2702,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       const openingRef = React.useRef(false);
 
       const startCapture = React.useCallback(async (reuse = null) => {
-        if (!props.access.active()) return;
+        if (configRequestRef.current === 'post' || !props.access.active()) return;
         /* Opening is asynchronous; without this guard a second call slips in
          * before the first has a stream, and two captures fight for the device. */
         if (!reuse && (liveCapture.current || liveCapture.opening)) {
@@ -2092,6 +2721,10 @@ registerProcessor('aura-capture', AuraCapture);`;
         if (!reuse) captureRef.current = null;
         setError(null);
         setHeard('');
+        if (modeRef.current === 'talk') {
+          if (prefsRef.current.character) { stopSpeaking({ reason: 'mic-start' }); characterControl.current?.activity(); }
+          setSingleStage('listening');
+        }
         partialRef.current = { text: '', at: 0 };
         const turn = {
           socket: null, release: null, started: false,
@@ -2184,7 +2817,7 @@ registerProcessor('aura-capture', AuraCapture);`;
                   if (voiceRef.current && !echo) {
                     diag('barge_heard', { chars: text.length });
                     gaggedRef.current = runSeqRef.current;
-                    stopSpeaking({ echoTail: false });
+                    stopSpeaking({ echoTail: false, reason: 'barge-in' });
                     gateRef.current.active = false;
                     gateRef.current.until = 0;
                   }
@@ -2307,6 +2940,17 @@ registerProcessor('aura-capture', AuraCapture);`;
               diag('asr', { chars: text.length, empty: text.length === 0 });
               if (text) {
                 setHeard(text);
+                if (modeRef.current === 'talk') {
+                  // A single utterance releases the real microphone BEFORE
+                  // command/prompt RPC, not after the task has been accepted.
+                  stopCapture('single-final');
+                  const releasedEpoch = captureEpoch.current;
+                  const stillSingle = () => props.access.active() && captureEpoch.current === releasedEpoch;
+                  setSingleStage('waiting');
+                  accepted = await submitText(text, stillSingle);
+                  if (!accepted && stillSingle()) setSingleStage('idle');
+                  return;
+                }
                 accepted = await submitText(text, current);
               }
             }
@@ -2373,6 +3017,7 @@ registerProcessor('aura-capture', AuraCapture);`;
           choose({ mode: 'talk' });
           diag('mic_error', { message: String((failure && failure.message) || failure).slice(0, 160) });
           setError(String((failure && failure.message) || failure));
+          setSingleStage('idle');
           try {
             if (turn.socket) turn.socket.close();
           } catch {
@@ -2394,20 +3039,67 @@ registerProcessor('aura-capture', AuraCapture);`;
        */
       const callActive = (prefs.mode || 'talk') === 'chat';
       const toggleCall = React.useCallback(() => {
+        if (configRequestRef.current === 'post') return;
         if (callActive) {
           choose({ mode: 'talk' });
+          setSingleStage('idle');
           stopCapture();
           gaggedRef.current = runSeqRef.current;
-          stopSpeaking();
+          stopSpeaking({ reason: 'hangup' });
         } else {
           choose({ mode: 'chat' });
           if (!captureRef.current) void startCapture();
         }
       }, [callActive, choose, startCapture, stopCapture, stopSpeaking]);
 
+      const configurationBusy = () => busy || running || runningRef.current || waiting || listening || transcribing || callActive || talking
+        || pendingTaskCount > 0 || pendingTaskIds.current.size > 0 || visualBusy.current || !!visualStatus || openingRef.current
+        || !!captureRef.current || !!pendingCapture.current || !!voiceRef.current || !!speechAbort.current;
+      const configSaveBlocked = configurationBusy();
+      const saveVisualConfig = async () => {
+        if (configRequestRef.current || configurationBusy() || !visualConfigAvailable || !visualConfig?.editable || !props.access.active()) return;
+        const enabled = !visualConfig.enabled;
+        configRequestRef.current = 'post'; setVisualConfigRequest('post'); setVisualConfigError('');
+        props.access.configurationPending();
+        try {
+          // Do not abort this POST on Pane unmount: a successful config edit can
+          // close the instance before its acknowledgement reaches the browser.
+          const response = await fetch('/aura/visual/config', { method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-aura-instance': props.access.token }, body: JSON.stringify({ enabled }) });
+          const value = await response.json();
+          if (!response.ok) throw new Error(value?.error || `保存失败（${response.status}）`);
+          if (value?.saved !== true || value.enabled !== enabled || value.reopen !== true) throw new Error('未收到有效的保存确认，请重新打开 Aura 核实状态。');
+          props.access.configurationSaved();
+        } catch (failure) {
+          const message = String(failure?.message || failure);
+          props.access.configurationFailed(message);
+          if (configMounted.current) setVisualConfigError(`保存失败：${message}`);
+        } finally {
+          configRequestRef.current = null;
+          if (configMounted.current) setVisualConfigRequest(null);
+        }
+      };
+
+      const preparationStage = visualStatus?.state === 'ready' ? PREPARATION_STAGES.ready
+        : PREPARATION_STAGES[visualStatus?.stage] || visualStatus?.stage || visualStatus?.state;
+      const preparationElapsed = Math.max(preparationSeconds, Math.floor(visualStatus?.elapsedSeconds || 0));
+      const preparationProgress = Number.isFinite(visualStatus?.progress?.step) && Number.isFinite(visualStatus?.progress?.steps)
+        ? ` · ${visualStatus.progress.step}/${visualStatus.progress.steps}` : '';
+      const playbackBuffering = visualStatus?.stage === '音画缓冲';
+      const playbackPending = visualStatus?.state === 'ready' || visualStatus?.stage === '等待音画播放器就绪';
+
       return h(
         'div',
-        { style: PANE, 'data-aura-phase': phase, ref: paneRef },
+        { style: PANE, className: prefs.character ? 'aura-character' : undefined,
+          'data-aura-phase': phase, ref: paneRef },
+        prefs.character && !callActive ? h(SingleCharacter, {
+          stage: listening ? 'listening' : visualBusy.current ? singleStage : (running || pendingTaskCount > 0) ? 'waiting' : error ? 'idle' : singleStage, sessionId: props.sessionId, control: characterControl,
+        }) : prefs.character ? h('div', { style: CHARACTER_SURROUND, 'data-aura-visual': 'portrait' },
+          h('img', { src: '/aura/character/short-hair.png', style: CHARACTER_IMAGE,
+            width: 1113, height: 1414, alt: 'Aura 短发正面半身 · 静态', draggable: false,
+            'data-aura-art': 'short-hair-static-v1',
+            onLoad: event => diag('portrait_loaded', { art: 'short-hair-static-v1',
+              width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight }) })) : null,
         h('style', null, STYLE),
         h(
           'div',
@@ -2548,6 +3240,30 @@ registerProcessor('aura-capture', AuraCapture);`;
               h(
                 'div',
                 null,
+                h('label', { className: 'aura-row' },
+                  h('input', { type: 'checkbox', checked: !!prefs.character,
+                    onChange: event => choose({ character: event.target.checked }) }),
+                  '显示数字人'),
+                h('div', { 'data-aura-visual-config': true, style: { display: 'grid', gap: 6, margin: '8px 0' } },
+                  h('div', { role: 'status', 'aria-live': 'polite' },
+                    `本地回复生成：${visualConfigAvailable ? visualConfig.enabled ? '已启用' : '已关闭' : '状态不可用'}`),
+                  h('div', { className: 'aura-row' },
+                    h('button', { type: 'button', className: 'aura-act',
+                      'aria-label': '切换本地回复生成',
+                      disabled: !!visualConfigRequest || configSaveBlocked || !visualConfigAvailable || !visualConfig?.editable,
+                      onClick: saveVisualConfig },
+                    visualConfigRequest === 'post' ? '正在保存…' : visualConfigAvailable && visualConfig.enabled ? '关闭本地回复生成' : '启用本地回复生成'),
+                    h('button', { type: 'button', className: 'aura-act',
+                      'aria-label': '刷新本地回复生成状态', disabled: !!visualConfigRequest,
+                      onClick: refreshVisualConfig }, visualConfigRequest === 'get' ? '读取状态…' : '刷新状态')),
+                  visualConfigRequest === 'post' ? h('div', { role: 'status' }, '正在保存配置；成功后 Aura 将重启，请重新打开 Aura。') : null,
+                  visualConfigAvailable && !visualConfig.editable ? h('div', { className: 'aura-id-mono' }, visualConfig.reason || '此配置当前不可编辑。') : null,
+                  configSaveBlocked ? h('div', { className: 'aura-id-mono', style: { whiteSpace: 'normal' } }, '请先结束收音、通话、任务及播放，再修改配置。') : null,
+                  visualConfigError ? h('div', { role: 'alert', style: ERROR }, visualConfigError) : null,
+                  h('div', { className: 'aura-id-mono', style: { whiteSpace: 'normal', lineHeight: 1.5 } },
+                    `环境：未检测（只读取配置，不执行 TTS 或模型预检）。${visualConfigAvailable ? ` Host v${visualConfig.version}` : ''}`)),
+                h('div', { className: 'aura-id-mono', style: { whiteSpace: 'normal', lineHeight: 1.5 } },
+                  '单句数字人需选择女声 + CosyVoice 3.0 Flash（非 3.5）；不自动换声。本地离线生成可能约 54 分钟（非实时）；10 秒正面循环有接缝。'),
                 h('div', { className: 'aura-cap' }, '头像'),
                 h(
                   'div',
@@ -2596,8 +3312,22 @@ registerProcessor('aura-capture', AuraCapture);`;
           : null,
         h(
           'div',
-          { style: STAGE, role: 'group', 'aria-label': `Aura ${phase}` },
-          h('canvas', { ref: canvasRef, style: CANVAS, 'aria-hidden': true }),
+          { style: STAGE, role: 'group', 'aria-label': `Aura ${visualPhase}` },
+          prefs.character ? null : h('canvas', { ref: canvasRef, style: CANVAS,
+            'data-aura-visual': 'orb', 'aria-hidden': true }),
+          visualStatus ? h('section', { className: 'aura-preparation', 'data-aura-preparation': true,
+            role: 'group', 'aria-label': '本次回答音画准备' },
+            h('h3', null, playbackBuffering ? '文字已回复，音画正在缓冲'
+              : playbackPending ? '文字已回复，音画就绪等待播放' : '文字已回复，音画仍在生成'),
+            h('p', null, playbackBuffering ? '本次回答音画正在缓冲，恢复后继续播放'
+              : '当前为待机画面，完成后自动播放本次回答'),
+            h('p', null, '请留在本会话；切换、关闭或刷新会取消本次生成'),
+            h('p', null, '非实时生成，可能耗时数分钟或更久'),
+            // Only stage changes are live. Elapsed ticks never re-announce the
+            // heading, cancellation warning, or other long instructions.
+            h('p', { role: 'status', 'aria-live': 'polite', 'aria-atomic': true }, preparationStage),
+            h('p', { className: 'aura-preparation-detail', 'aria-live': 'off' },
+              `已用 ${preparationElapsed} 秒${preparationProgress}`)) : null,
           h(
             'button',
             {
@@ -2607,6 +3337,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               title: callActive ? '挂断' : '通话',
               'aria-label': callActive ? 'End call' : 'Start call',
               'aria-pressed': String(callActive),
+              disabled: visualConfigRequest === 'post',
               onClick: toggleCall,
             },
             callActive ? h(HangupIcon, null) : h(PhoneIcon, null),
@@ -2615,7 +3346,8 @@ registerProcessor('aura-capture', AuraCapture);`;
         h(
           'div',
           { style: CAPTION, title: heard || undefined },
-          listening ? 'listening' : transcribing ? 'transcribing' : heard || phase,
+          visualStatus ? `准备回答 · 已用 ${preparationElapsed} 秒 · ${preparationStage}${preparationProgress}`
+            : listening ? 'listening' : transcribing ? 'transcribing' : heard || phase,
         ),
         h(
           'div',
@@ -2630,6 +3362,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               rows: 1,
               placeholder: 'Ask in this session…',
               'aria-label': 'Message this session',
+              disabled: visualConfigRequest === 'post',
               onChange: (event) => setDraft(event.target.value),
               onKeyDown,
             }),
@@ -2642,6 +3375,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               style: listening ? { ...BUTTON, ...BUTTON_ACTIVE } : BUTTON,
                 title: `${listening ? 'Stop listening' : 'Speak'} · ${AURA_VERSION}`,
                 'aria-label': listening ? 'Stop listening' : 'Start listening',
+                disabled: visualConfigRequest === 'post',
                 onClick: toggleMic,
               },
               listening ? h(StopIcon, null) : h(MicIcon, null),
@@ -2654,12 +3388,12 @@ registerProcessor('aura-capture', AuraCapture);`;
                 style: BUTTON,
                 title: 'Send',
                 'aria-label': 'Send',
-                disabled: busy || draft.trim() === '',
+                disabled: busy || visualConfigRequest === 'post' || draft.trim() === '',
                 onClick: send,
               },
               h(SendIcon, null),
             ),
-            (running || talking)
+            (running || talking || visualStatus)
               ? h(
                   'button',
                   {
@@ -2672,7 +3406,7 @@ registerProcessor('aura-capture', AuraCapture);`;
                       /* Stop the voice. Whether the work is cancelled is a
                        * separate decision, so it is not made here. */
                       gaggedRef.current = runSeqRef.current;
-                      stopSpeaking();
+                      stopSpeaking({ reason: 'silence-button' });
                     },
                   },
                   h(HaltIcon, null),
@@ -2680,7 +3414,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               : null,
           ),
           h('div', { className: 'aura-id-mono', style: { whiteSpace: 'normal', lineHeight: 1.5 } },
-            '简单问题直接答，任务独立执行。插话或挂断不停止任务；普通模式：/aura off。'),
+            prefs.character && !callActive ? '正面素材为 10 秒循环，接缝可能可见。回复使用当前音色完整音画，生成期间显示真实状态；300 秒无任务才允许返回侧身。' : '简单问题直接答，任务独立执行。插话或挂断不停止任务；普通模式：/aura off。'),
           error ? h('div', { style: ERROR, role: 'alert' }, error) : null,
         ),
       );

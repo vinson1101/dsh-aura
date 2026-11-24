@@ -50,7 +50,11 @@ export function installTaskSpeech(ctx, deliver) {
     }
     const duplicate = children.every(child => recent.get(child) === state.text);
     for (const child of children) { recent.set(child, state.text); bound(recent); }
-    if (!duplicate) deliver(state.sessionId, { type: 'task-summary', key: k, turn: state.turn, text: state.text });
+    if (!duplicate) deliver(state.sessionId, { type: 'task-summary', key: k, turn: state.turn, text: state.text, taskIds: children,
+      // Preserve the reserved native identity even when completion arrives before
+      // aura_task's receipt. A multi-task summary has no single child identity.
+      ...(children.length === 1 ? { taskId: children[0] } : {}),
+    });
   });
   ctx.on('agent/disposed', ({ agent }) => {
     for (const [child, task] of tasks) if (task.parent === agent.id) tasks.delete(child);

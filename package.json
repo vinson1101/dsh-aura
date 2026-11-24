@@ -1,6 +1,6 @@
 {
   "name": "dsh-aura",
-  "version": "0.35.3",
+  "version": "0.35.4-visual.3",
   "description": "A voice companion for DeepSeek Harness: responsive conversation and independently managed tasks, with natural interruption that leaves work running.",
   "license": "MIT",
   "author": "vinson1101",
@@ -28,14 +28,29 @@
     "index.js",
     "asr.js",
     "tts.js",
+    "visual-response.js",
+    "visual-settings.js",
+    "tools/latentsync-response.py",
     "tasks.js",
     "task-speech.js",
     "instance.js",
     "secrets.js",
     "client.js",
+    "assets/runtime/peach/*.webp",
+    "assets/runtime/short-hair/side.png",
+    "assets/runtime/short-hair/turn.mp4",
+    "assets/runtime/short-hair/listen.mp4",
+    "assets/runtime/short-hair/respond.mp4",
+    "assets/runtime/short-hair/return.mp4",
+    "assets/previews/短发直播测试/无声倾听/短发正面直视-参考帧.png",
+    "assets/previews/短发直播测试/无声倾听/短发正面直视-十秒无声倾听.mp4",
+    "assets/previews/短发直播测试/Wan讲话-背景单独校正/Wan讲话底片-定妆棚景-10秒无声.mp4",
     "cordis.patch.yml",
     "locale/*.json",
-    "docs",
+    "docs/DETAIL.md",
+    "docs/PANEL.md",
+    "docs/PROVIDERS.md",
+    "docs/VOICES.md",
     "icon.svg"
   ],
   "dsh": {
@@ -67,7 +82,7 @@
     "react-dom": "^18.3.1"
   },
   "scripts": {
-    "test": "node test/task-speech.test.mjs && node test/instance.test.mjs && node test/host.test.mjs && node test/secrets.test.mjs && node test/asr.test.mjs && node test/paraformer.test.mjs && node test/live.test.mjs && node test/tts.test.mjs && node test/pane.test.mjs && node test/mic.test.mjs && node test/reply.test.mjs && node test/speech.test.mjs && node test/prompt.test.mjs && node test/barge.test.mjs && node test/dispatch-race.test.mjs && AURA_TEST_CONTINUOUS=1 node test/mic.test.mjs"
+    "test": "node test/task-speech.test.mjs && node test/instance.test.mjs && node test/visual-response.test.mjs && node test/visual-settings.test.mjs && node test/host.test.mjs && node test/secrets.test.mjs && node test/asr.test.mjs && node test/paraformer.test.mjs && node test/live.test.mjs && node test/tts.test.mjs && node test/character.test.mjs && node test/single-visual.test.mjs && node test/pane.test.mjs && node test/readiness.test.mjs && node test/mic.test.mjs && node test/reply.test.mjs && node test/speech.test.mjs && node test/prompt.test.mjs && node test/barge.test.mjs && node test/dispatch-race.test.mjs && AURA_TEST_CONTINUOUS=1 node test/mic.test.mjs"
   },
   "dependencies": {
     "ws": "^8.23.0"

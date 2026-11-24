@@ -13,10 +13,11 @@
  * The authenticated /aura command owns foreground mode and interruption;
  * native managed subagents independently own dispatched work.
  */
-import { appendFile } from 'node:fs/promises';
+import { appendFile, readFile, stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { Readable } from 'node:stream';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { readFile } from 'node:fs/promises';
 import { createAsr, openParaformerSession, withAllocationRetry } from './asr.js';
 import { WebSocketServer } from 'ws';
 import { randomUUID } from 'node:crypto';
@@ -25,6 +26,8 @@ import { createTts, speakablePrefix, textSegments } from './tts.js';
 import { installTaskLayer } from './tasks.js';
 import { installInstance } from './instance.js';
 import { installTaskSpeech } from './task-speech.js';
+import { createVisualResponse, visualConfig } from './visual-response.js';
+import { installVisualSettings } from './visual-settings.js';
 
 export const inject = ['webServer', 'commands', 'subagents', 'tools', 'systemPrompt', 'agents'];
 
@@ -35,6 +38,33 @@ const MAX_PCM_BYTES = 8 * 1024 * 1024;
 const MAX_BODY_BYTES = 12 * 1024 * 1024;
 /** Credential record this plugin owns, as `<scope>/<id>`. */
 const CREDENTIAL_KEY = 'dsh-aura/asr';
+
+// Exact, local-only allowlist: no URL, pathname or query value selects a file.
+// Keep the old portrait URL compatible with the existing static character mode.
+const CHARACTER_ASSETS = [
+  ['short-hair.png', './assets/previews/短发直播测试/无声倾听/短发正面直视-参考帧.png', 'image/png'],
+  ['front.mp4', './assets/previews/短发直播测试/无声倾听/短发正面直视-十秒无声倾听.mp4', 'video/mp4'],
+  ['side.png', './assets/runtime/short-hair/side.png', 'image/png'],
+  ['turn.mp4', './assets/runtime/short-hair/turn.mp4', 'video/mp4'],
+  ['listen.mp4', './assets/runtime/short-hair/listen.mp4', 'video/mp4'],
+  ['respond.mp4', './assets/runtime/short-hair/respond.mp4', 'video/mp4'],
+  ['return.mp4', './assets/runtime/short-hair/return.mp4', 'video/mp4'],
+];
+
+/** One byte range only; reject malformed/multipart/unsafe integers without IO. */
+function characterRange(value, size) {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value);
+  if (!match || (!match[1] && !match[2])) return null;
+  const first = match[1] ? Number(match[1]) : undefined;
+  const last = match[2] ? Number(match[2]) : undefined;
+  if ([first, last].some(n => n !== undefined && !Number.isSafeInteger(n))) return null;
+  if (first === undefined) {
+    if (!last || !size) return null;
+    return { start: Math.max(0, size - last), end: size - 1 };
+  }
+  if (first >= size || (last !== undefined && first > last)) return null;
+  return { start: first, end: Math.min(last ?? size - 1, size - 1) };
+}
 
 function dshHome() {
   return process.env.DSH_HOME || path.join(homedir(), '.dsh');
@@ -65,12 +95,12 @@ async function append(line) {
 }
 
 /** Read a request body as text, refusing anything oversized. */
-async function readBody(req) {
+async function readBody(req, limit = MAX_BODY_BYTES) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw new Error('request body too large');
+    if (size > limit) throw new Error('request body too large');
     chunks.push(chunk);
   }
   return Buffer.concat(chunks).toString('utf8');
@@ -320,7 +350,118 @@ export function apply(ctx, config = {}) {
       }),
     'dsh-aura: live recognition route',
   );
+  for (const [name, localPath, contentType] of CHARACTER_ASSETS) {
+    const file = new URL(localPath, import.meta.url);
+    ctx.effect(() => ctx.webServer.register({
+      kind: 'exact', path: `/aura/character/${name}`,
+      resource: async (request, peer) => {
+        // Resources do not authenticate themselves. Reuse the old portrait's
+        // Host/Origin + browser-cookie gate; in-process readers are admitted by
+        // the caller before supplying a Peer. Always gate before file access.
+        if (!peer) {
+          const connection = ctx.get?.('connection');
+          const rejection = connection ? connection.requestRejection(request) : 401;
+          if (rejection) return new Response(null, { status: rejection });
+        }
+        if (!['GET', 'HEAD'].includes(request.method)) {
+          return new Response(null, { status: 405, headers: { Allow: 'GET, HEAD' } });
+        }
+        try {
+          const { size } = await stat(file);
+          const headers = {
+            'content-type': contentType, 'content-length': String(size),
+            'cache-control': 'no-cache', 'x-content-type-options': 'nosniff',
+            'accept-ranges': 'bytes',
+          };
+          // RFC 9110: Range applies only to GET. Without validators an If-Range
+          // request gets the full representation, never an unvalidated slice.
+          const value = request.method === 'GET' && !request.headers.has('if-range')
+            ? request.headers.get('range') : null;
+          let range;
+          if (value !== null) {
+            range = characterRange(value, size);
+            if (!range) return new Response(null, { status: 416, headers: {
+              ...headers, 'content-length': '0', 'content-range': `bytes */${size}`,
+            } });
+            headers['content-range'] = `bytes ${range.start}-${range.end}/${size}`;
+            headers['content-length'] = String(range.end - range.start + 1);
+          }
+          // HEAD only stats the file; GET streams precisely the selected bytes.
+          const body = request.method === 'HEAD' ? null : Readable.toWeb(createReadStream(file, {
+            ...range, signal: request.signal,
+          }));
+          return new Response(body, { status: range ? 206 : 200, headers });
+        } catch { return new Response(null, { status: 404 }); }
+      },
+    }), 'dsh-aura: approved character asset');
+  }
   const tts = createTts(config.tts || {}, readKey);
+  const visual = createVisualResponse({
+    config: config.visualResponse || {}, instance,
+    // This independent buffered path fixes PCM's actual format, without changing
+    // ordinary streaming TTS or any current browser voice/model preference.
+    tts: createTts({ ...(config.tts || {}), sampleRate: 16000 }, readKey),
+    connection: () => ctx.get?.('connection'),
+    diagnostic: value => append(JSON.stringify({ at: new Date().toISOString(), ...value })),
+  });
+  ctx.effect(() => () => { void visual.dispose(); }, 'dsh-aura: local visual lifecycle');
+  const visualEnabled = visualConfig(config.visualResponse || {}).enabled;
+  installVisualSettings(ctx, { instance, enabled: visualEnabled, version: '0.35.4-visual.3' });
+  void append(JSON.stringify({ stage: 'visual_backend', v: '0.35.4-visual.3',
+    at: Date.now(), enabled: visualEnabled }));
+  const visualApi = audioRoute(async (req, res, cancelled) => {
+    res.setHeader('cache-control', 'no-store');
+    try {
+      const token = req.headers['x-aura-instance'];
+      const url = new URL(req.url, 'http://localhost');
+      if (req.method === 'POST') {
+        if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) {
+          sendJson(res, 400, { error: 'application/json required' }); return;
+        }
+        let body;
+        try { body = JSON.parse(await readBody(req, 8192)); }
+        catch { sendJson(res, 400, { error: 'invalid or oversized JSON body' }); return; }
+        if (!cancelled.signal.aborted) sendJson(res, 202, visual.create(body, token));
+      } else if (req.method === 'GET') sendJson(res, 200, visual.get(url.searchParams.get('id'), token));
+      else if (req.method === 'DELETE') sendJson(res, 200, visual.delete(url.searchParams.get('id'), token));
+      else { res.writeHead(405, { allow: 'POST, GET, DELETE' }); res.end(); }
+    } catch (error) { sendJson(res, error.status || 500, { error: String(error.message || error).slice(0, 300) }); }
+  });
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact', path: '/aura/visual',
+    handler: async (req, res) => {
+      // Check the actual request authority/Origin/cookie before ownership, body
+      // parsing or IO. Request resources need the same explicit browser gate.
+      const connection = ctx.get?.('connection');
+      let rejection = 401;
+      if (connection) {
+        try {
+          const protocol = new URL(ctx.webServer.getOrigin()).protocol;
+          const url = new URL(req.url, `${protocol}//${req.headers.host}`);
+          rejection = connection.requestRejection(new Request(url, { method: req.method, headers: req.headers }));
+        } catch { rejection = 403; }
+      }
+      if (rejection) { sendJson(res, rejection, { error: 'Browser authentication required' }); return; }
+      await visualApi(req, res);
+    },
+  }), 'dsh-aura: local visual API');
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact', path: '/aura/visual/media', resource: (request, peer) => visual.media(request, peer),
+  }), 'dsh-aura: scoped local visual media');
+  for (const file of ['portrait.webp', 'motion.webp']) {
+    ctx.effect(() => ctx.webServer.register({
+      kind: 'exact', path: `/aura/peach/${file}`,
+      handler: async (req, res) => {
+        if (req.method !== 'GET') { res.writeHead(405).end(); return; }
+        try {
+          const image = await readFile(new URL(`./assets/runtime/peach/${file}`, import.meta.url));
+          res.writeHead(200, { 'content-type': 'image/webp' }).end(image);
+        } catch {
+          res.writeHead(404).end();
+        }
+      },
+    }), 'dsh-aura: character artwork');
+  }
 
   ctx.effect(
     () =>

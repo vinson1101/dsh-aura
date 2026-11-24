@@ -6,10 +6,10 @@ import { WebSocketServer } from 'ws';
 export function installInstance(ctx, { heartbeatMs = 4000, timeoutMs = 12000 } = {}) {
   const sockets = new WebSocketServer({ noServer: true });
   let owner = null;
-  const release = (seat) => {
+  const release = (seat, reason) => {
     if (owner !== seat) return;
     owner = null;
-    for (const stop of seat.resources) { try { stop(); } catch {} }
+    for (const stop of seat.resources) { try { stop(reason); } catch {} }
     seat.resources.clear();
   };
   const authorize = (token, stop) => {
@@ -37,8 +37,8 @@ export function installInstance(ctx, { heartbeatMs = 4000, timeoutMs = 12000 } =
             peer.send(JSON.stringify({ type: 'heartbeat' }));
           }
         });
-        peer.on('error', () => { release(seat); peer.terminate(); });
-        peer.on('close', () => release(seat));
+        peer.on('error', () => { release(seat, 'socket-error'); peer.terminate(); });
+        peer.on('close', () => release(seat, 'socket-close'));
         peer.send(JSON.stringify({ type: 'owned', token: seat.token, sessionId, timeoutMs }));
       });
     },
@@ -47,14 +47,14 @@ export function installInstance(ctx, { heartbeatMs = 4000, timeoutMs = 12000 } =
     const timer = setInterval(() => {
       if (owner && Date.now() - owner.seen > timeoutMs) {
         const stale = owner;
-        release(stale);
+        release(stale, 'heartbeat-timeout');
         stale.peer.terminate();
       }
     }, heartbeatMs);
     timer.unref?.();
     return () => {
       clearInterval(timer);
-      if (owner) release(owner);
+      if (owner) release(owner, 'plugin-dispose');
       for (const peer of sockets.clients) peer.terminate();
       sockets.close();
     };

@@ -91,8 +91,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const SKIP = new Set(['node_modules', '.git', 'test']);
-const KEY_SHAPES = [/sk-[A-Za-z0-9._-]{20,}/, /MEUCIQ[A-Za-z0-9+/=]{10,}/];
+// Like node_modules, the gitignored real-app preview is local runtime state,
+// not plugin source; Chromium owns transient/broken OS symlinks inside it.
+const SKIP = new Set(['node_modules', '.git', 'test', '.aura-local-preview']);
+// A task UUID contains "sk-..." inside "task-..."; it is not an API key.
+// Keep scanning every source/doc and require a token boundary, not a file exemption.
+const KEY_SHAPES = [/\bsk-[A-Za-z0-9._-]{20,}/, /MEUCIQ[A-Za-z0-9+/=]{10,}/];
+const fakeKey = 'sk-' + 'x'.repeat(32);
+for (const text of [fakeKey, `Bearer ${fakeKey}`, `API_KEY="${fakeKey}"`]) {
+  assert.ok(KEY_SHAPES[0].test(text), 'real-shaped standalone keys must still be rejected');
+}
+assert.equal(KEY_SHAPES[0].test('task-635a3309-3dfd-42db-9f80-8f31cb0f7d2a'), false);
 const offenders = [];
 
 function walk(directory) {

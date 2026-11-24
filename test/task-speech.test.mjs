@@ -16,6 +16,7 @@ const child = speech.reserve(parent);
 answer(1, '已派发。'); assert.equal(delivered.length, 0);
 claim(child, 2); answer(2, '已完成测试。'); answer(2, '已完成测试。');
 assert.equal(delivered.length, 1); assert.equal(delivered[0].text, '已完成测试。');
+assert.equal(delivered[0].taskId, child, 'single task summary includes the actual reserved native child');
 // Unrelated children, sessions, and unknown results cannot claim this channel.
 claim('ordinary-child', 3); answer(3, '不应读');
 claim(child, 4, 'subagent-settled', { id: 'other-session' }); answer(4, '不应读');
@@ -24,6 +25,8 @@ assert.equal(delivered.length, 1);
 const second = speech.reserve(parent);
 claim(child, 5); claim(second, 5); answer(5, '两个任务都完成。');
 assert.equal(delivered.length, 2);
+assert.equal(delivered.at(-1).taskId, undefined, 'merged summary must not invent a single native task identity');
+assert.deepEqual(delivered.at(-1).taskIds, [child, second].sort(), 'merged summary names every actual completed child');
 claim(second, 5); answer(5, '重复 end'); assert.equal(delivered.length, 2);
 // send_message followed by settled: identical parent summary once.
 claim(second, 6, 'agent-message'); answer(6, '测试通过。');
@@ -49,5 +52,6 @@ const off = mountForeground(parent, { resolveMaxDepth: () => 1, async startActiv
 const result = await task.execute({ description: 'fast', prompt: 'context' }, { signal: new AbortController().signal });
 assert.equal(result.sessionId, spec.childId); assert.match(spec.childId, /^session-/);
 assert.equal(delivered.at(-1).text, '极速完成。'); assert.equal(spec.cwd, '/same-workspace');
+assert.equal(delivered.at(-1).taskId, spec.childId, 'fast summary carries child ID before activation receipt');
 off(); effects.reverse().forEach(fn => fn());
 console.log('task-speech.test.mjs: ok (native claimed/message/end contracts, attribution, fast receipt, dedup, failures)');

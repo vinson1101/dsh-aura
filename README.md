@@ -101,6 +101,11 @@ npm test
 ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" test/runtime.cjs
 ```
 
+The default suite includes local ffmpeg/ffprobe fixture checks and currently expects
+`/opt/homebrew/bin/ffmpeg` and `/opt/homebrew/bin/ffprobe` on this Mac. It does not
+run TTS, download models or perform inference. Merely running `npm install` on
+another platform is not enough to reproduce those fixture checks unchanged.
+
 The regression suite covers recognition lifecycle, fallback, PCM delivery, echo,
 barge-in, speech, sidebar submission, task dispatch contracts and repeated classic-
 script loading in the same page (including an upgrade from the legacy global
@@ -131,3 +136,120 @@ listeners, animation frames and microphone resources.
 Orb geometry and palette derive from **Zebra**, a private project by the same
 author. Slot and bundle conventions follow DSH's installed plugin documentation.
 [MIT](LICENSE).
+
+## Local digital-human test
+
+The static prototype described first is historical; the current single-task v3
+behavior and short-answer acceptance are documented in the next subsection.
+
+Open the Aura profile and enable **显示数字人** to show the approved short-haired,
+front-facing half-body still. It retains the original aspect ratio and full image:
+no square face atlas, cover enlargement, stretched body, animated mouth or autoplay.
+The image's subject-free background colours extend across the whole plugin-owned
+pane, behind its title chip, call control and composer. The Host-owned tab strip
+is not restyled. Disabling the option restores the particle canvas and theme.
+This is a visual layer only; call, microphone, speech and task ownership are unchanged.
+
+The fixed `/aura/character/short-hair.png` route serves only the approved PNG,
+using Connection's normal Host/Origin and browser authentication checks. No arbitrary
+filesystem path or external URL is accepted. The local self-contained visual preview
+is [aura-short-hair-panel-local.html](assets/previews/aura-short-hair-panel-local.html);
+rebuild it with `node tools/build-static-portrait-preview.mjs`. It reuses current pane
+styles, but is **not a screenshot or running DSH**: its call/mic/send controls are
+inert previews, its particle is a placeholder, and it has no audio/API access.
+A real GUI refresh, visual review and microphone/speaker acceptance remain separate.
+
+Legacy peach WebP assets and `tools/render-peach.py` remain for the earlier local
+experiment, but are not used by this static mode. Their generation used external
+[LivePortrait](https://github.com/KlingAIResearch/LivePortrait/tree/9b294b3d0536135442ea73cb01e6cb3ca7029dd3)
+model weights; no weights are bundled. A future narrow-layout full-body variant
+should use user-provided full-body artwork, not crop or synthesize this half-body still.
+
+### Single-task v3: short-answer playback accepted, not realtime
+
+The static-mode description above and the [rejected closed-mouth recording](<assets/runtime/short-hair/inspection/live-acceptance/closed-mouth-rejected/README.md>)
+are historical, not the v3 answer path. The current single-task character uses one
+video element: the approved quiet ten-second frontal loop continues unchanged
+through idle, listening, thinking and preparation. Its loop seam is visible; it
+is not an indefinitely seamless generated take. Only **300 seconds of inactivity**
+permits a return sideways; active capture, tasks, preparation and playback block
+that timer. Clicking the microphone while sideways starts capture immediately and
+lets the full existing turn-to-front finish independently. A completed answer
+returns to frontal, not sideways. Continuous calls retain their original path.
+
+The opt-in local [visual backend](<visual-response.js>) buffers this task's complete
+current female TTS, drives the approved Wan base through the existing LatentSync
+MPS environment, then muxes and fully decodes/validates the complete AV file before
+publishing a scoped media URL. The browser uses that video's `playing`/`ended`
+events, never separate PCM scheduling or an old response movie. Cancellation
+invalidates polling, media capabilities and owned subprocesses. It does not cancel
+independent native tasks merely because their playback was stopped.
+
+Normal source rendering is **disabled by default**. The isolated local test
+artifact `0.35.4-visual.3-r1` explicitly enables it on this machine; persisted
+configuration, including `enabled: false`, always overrides those local defaults.
+The current GUI's Aura settings report the actual Host version/enabled state and
+can save the backend toggle; reopen Aura manually after saving. This is separate
+from the **显示数字人** display checkbox. For a normal installation, Host plugin config
+`visualResponse: { enabled: true }` opts in to this machine's existing local paths;
+other machines must configure their installed `envDir`, `repoDir`, `vaeDir`,
+`python`, `ffmpeg`, `ffprobe` and `workDir`. No model downloads are performed.
+Choose an explicit supported female system voice and `cosyvoice-v3-flash` in Aura;
+there is no automatic voice substitution. Replies over 240 characters or 25 seconds
+are rejected rather than silently truncated. Only one render may run at a time.
+The retained settings are CFG 1.5, seed 1247, 20 steps, DeepCache 3/branch 0.
+The prior verified 21.84-second sample took about 54 minutes; this is **not realtime**
+and is not timing evidence for a new reply.
+
+The `0.35.4-visual.2` repair addresses Desktop's `dsh-app:` MP4 demux failure:
+authenticated fetch supplies a bounded, complete MP4 Blob to the same video element.
+Its URL/reader/timers are revoked on cancellation; HTTP browsers retain direct media
+loading. A failed turn now rejects its queued answer instead of hanging. Transient
+status GET failures retry the same job up to three times, never re-POSTing or
+regenerating TTS. Autoplay denial retains the current AV and offers a separate
+click-to-play overlay; hiding the page cannot turn an interrupted play promise into
+a spurious failure. Cancellation records its first cause/stage without loosening
+ownership or the heartbeat timeout.
+
+For the visual.2 playback repair, all 21 regression commands passed (character 19/19, single-visual 18/18, settings
+readiness 11/11, plus backend, native attribution, authentication, ASR/TTS and
+synthetic call coverage). See the [repair regression log](<.aura-local-preview/playback-fix-20261124/regression-all-final.log>).
+The frozen repair artifact passed full-tree/dependency/import/wrapper checks both
+before and after installation. DSH manager applied the repair at the existing GUI;
+the active package link and unchanged ASR/TTS/non-Aura profile configuration were
+verified. The real Desktop Client fetched 1,357,805 bytes and decoded the frontal
+MP4 (720×914, 10 seconds, media error 0). After the user foregrounded Aura,
+real playing/frame beacons confirmed visible, unpaused playback and increasing
+presented frames across a full 10-second loop. The user confirmed that the person
+moves. This verifies the frontal playback repair, **not audible reply acceptance**.
+The historical short reply was cancelled before ready; its original cause remains
+unproven, so do not describe it as an autoplay failure.
+
+The visual.3 update makes preparation prominent in the main stage, with Chinese
+stage labels, actual elapsed time/step counts, and an explicit warning that text
+completion is not AV completion, generation may take minutes or longer, and leaving
+the conversation cancels it. Ready-to-play and buffering are not described as
+speaking. Safe cleanup/socket-close diagnostics distinguish lifecycle events without
+recording tokens or weakening ownership, heartbeat, or native-task independence.
+This visibility update does **not** accelerate rendering; playback acceptance
+requires a separate real-answer test, not the DOM/media test doubles.
+
+An earlier authorized greeting generated 0.88 seconds of female speech, then was
+cancelled at 21.426 seconds during rendering with `ownership-socket-close`, before
+ready/playback. The exact close action is not established. That attempt remains
+historical evidence, not a successful playback.
+
+On 2026-11-24, one newly authorized current-answer test of “你好。” completed:
+`longyan_v3` / `cosyvoice-v3-flash`, cache miss, ready at 175.192 seconds, followed
+by real nonmuted Desktop playback with advancing frames and normal `ended` cleanup.
+The user confirmed “听到了，但是很快就结束了”. Its 0.88-second audio and 0.96-second
+video explain the short playback; this was not an early cancellation. This accepts
+only that extreme short answer, **not realtime, longer answers or continuous calls**.
+All 21 offline regression commands also passed before Git synchronization.
+The additional one-test authorization is consumed; any further actual TTS/inference
+requires renewed explicit permission. Recording remains deferred; no replacement
+server was started. Detailed machine traces stay local under the gitignored
+`.aura-local-preview/`; they are not uploaded with the source.
+The running artifact remains a separately frozen local deployment, not a registry
+release. See the current
+[handoff, test steps and rollback](<docs/handoff/Aura数字人-单句与连续通话接入方案.md>).

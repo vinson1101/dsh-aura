@@ -51,5 +51,5 @@ assert.equal(bounded.stats().dropped, 128);
 assert.ok(!source.includes('handshakeFrames.length > 12'));
 assert.ok(!source.includes('const stoppedEpoch'), 'no close/reopen timer on normal call handoff');
 assert.ok(!source.includes('BARGE_LEVEL'), 'the conflicting level-based path is removed');
-assert.ok(source.includes('stopSpeaking({ echoTail: false })'));
+assert.ok(source.includes("stopSpeaking({ echoTail: false, reason: 'barge-in' })"));
 console.log('barge.test.mjs: ok');

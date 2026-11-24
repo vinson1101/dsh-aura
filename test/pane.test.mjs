@@ -59,6 +59,12 @@ const context = {
   createRadialGradient: () => ({ addColorStop: () => {} }),
 };
 window.HTMLCanvasElement.prototype.getContext = () => context;
+// jsdom has no media decoder. These lifecycle seams are exercised separately
+// in character.test.mjs; do not emit jsdom's "Not implemented" diagnostics.
+const mediaLifecycle = { pause: 0, load: 0 };
+window.HTMLMediaElement.prototype.pause = function () { mediaLifecycle.pause++; };
+window.HTMLMediaElement.prototype.load = function () { mediaLifecycle.load++; };
+window.HTMLMediaElement.prototype.play = async function () {};
 /* jsdom has no layout engine, so every box is 0 and the form would correctly
  * skip painting. Report a deliberately tall, narrow frame: that is the shape
  * that used to stretch a square bitmap into an oval with pointed ends. */
@@ -263,6 +269,63 @@ assert.equal(canvas.style.height, canvas.style.width, 'both CSS sides must match
 assert.ok(painted.clear > 0, 'the form must paint at least one frame');
 assert.ok(painted.fill > 0, 'the form must fill its depth groups');
 assert.ok(container.querySelector('textarea'), 'the pane must carry its composer');
+
+// Single-task v3: default frontal still + one shared video/media clock.
+// This is DOM/lifecycle coverage, not browser decoding or visual acceptance.
+profile.click();
+await new Promise(resolve => setTimeout(resolve, 20));
+const formSwitch = container.querySelector('.aura-card input[type=checkbox]');
+formSwitch.click();
+await new Promise(resolve => setTimeout(resolve, 30));
+const character = container.querySelector('[data-aura-visual="single-character"]');
+assert.ok(character, 'single mode mounts the single-utterance player, not the call portrait');
+const picture = character.querySelector('img');
+assert.equal(picture.getAttribute('src'), '/aura/character/short-hair.png');
+assert.equal(picture.style.objectFit, 'contain');
+assert.equal(character.dataset.auraState, 'idle');
+assert.equal(character.dataset.auraClip, 'front');
+assert.equal(character.style.inset, '0px', 'background spans the entire controlled pane');
+assert.match(character.style.background, /linear-gradient/);
+assert.equal(container.querySelectorAll('canvas, audio').length, 0, 'no old face canvas or duplicate sound owner');
+const decoderLayers = [...character.querySelectorAll('video')];
+assert.equal(decoderLayers.length, 1, 'one decoder keeps idle/listening/thinking on the same timeline');
+for (const video of decoderLayers) {
+  assert.equal(video.muted, true);
+  assert.equal(video.playsInline, true);
+  assert.equal(video.preload, 'auto');
+  assert.equal(video.getAttribute('aria-hidden'), 'true');
+  assert.equal(video.style.opacity, '0', 'idle does not expose an undecoded frame');
+  assert.equal(video.getAttribute('src'), '/aura/character/front.mp4', 'idle starts the approved silent frontal loop');
+  assert.equal(video.loop, true, 'variable-length idle/listening/thinking never uses a hardcoded split');
+}
+assert.equal(container.querySelectorAll('[data-aura-visual]').length, 1);
+assert.ok(container.querySelector('.aura-character textarea'));
+assert.ok(container.querySelector('button[aria-label="Start call"]'));
+assert.match(container.querySelector('[data-aura-phase]').style.gridTemplateRows, /minmax\(0(?:px)?, 1fr\)/);
+container.querySelector('button[aria-label="Close Aura profile"]').click();
+await new Promise(resolve => setTimeout(resolve, 20));
+profile.click();
+await new Promise(resolve => setTimeout(resolve, 20));
+const lifecycleBeforeSwitch = { ...mediaLifecycle };
+container.querySelector('.aura-card input[type=checkbox]').click();
+await new Promise(resolve => setTimeout(resolve, 20));
+assert.ok(!container.querySelector('.aura-character'), 'particle mode restores original pane palette');
+assert.ok(!container.querySelector('[data-aura-visual="single-character"]'),
+  'switching to particles unmounts the player');
+assert.equal(container.querySelectorAll('video').length, 0);
+assert.equal(mediaLifecycle.pause - lifecycleBeforeSwitch.pause, 1, 'the only decoder pauses on switch');
+assert.equal(mediaLifecycle.load - lifecycleBeforeSwitch.load, 1, 'the only decoder releases its resources on switch');
+for (const video of decoderLayers) {
+  assert.equal(video.getAttribute('src'), null);
+  assert.equal(video.onloadeddata, null);
+  assert.equal(video.onended, null);
+  assert.equal(video.onerror, null);
+}
+assert.equal(container.querySelectorAll('canvas').length, 1);
+const restored = container.querySelector('canvas');
+assert.equal(restored.width, restored.height);
+container.querySelector('button[aria-label="Close Aura profile"]').click();
+await new Promise(resolve => setTimeout(resolve, 20));
 
 /* ---- the composer grows instead of clipping the second line ------------- */
 
