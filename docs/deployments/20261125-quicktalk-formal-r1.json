@@ -1,0 +1,35 @@
+{
+  "deploymentId": "dsh-aura-visual4-quicktalk-formal-r1-20261125",
+  "recordedAt": "2026-11-25T23:06:42.210888+08:00",
+  "environment": "macOS DeepSeek Harness Desktop profile, dsh-app://app/, Host http://127.0.0.1:56195",
+  "status": "blocked-before-install",
+  "上线版本": "0.35.4-visual.4 (intended)",
+  "上线原因": "正式启用在隔离窗口验证过的 Aura 单句与互动更新。",
+  "authorization": "User explicitly authorized the existing Desktop profile update and source push.",
+  "sourceCommit": "1197386272b881f0faf5431f3bbd1281ba25afb8",
+  "sourceBase": "281139071ff8605f9181e1f997e79da1a6cdd89c",
+  "sourceDigest": "a8d4c12f78711922664db8bce94d544167be16cd7d034b2ef95601b8687dfbfa",
+  "artifactDigest": "b97f04beb754bccf66e1a33c2514d102a9312a8a711276099e04fba7542ba2a4",
+  "artifact": "/Users/vinson/Projects/local/aura-releases/0.35.4-visual.4-quicktalk-formal-r1/package",
+  "snapshot": "/Users/vinson/.dsh/backups/20261125-225938-aura-before-visual4-quicktalk-formal",
+  "snapshotScope": "82M, desktop manifests, profile YAML, pnpm workspace and lock, sessions; no added QuickTalk credential",
+  "headroom": {
+    "fileSystemUsedPercent": 41,
+    "availableGiB": 526
+  },
+  "preInstall": {
+    "frozenArtifactChecks": "/Users/vinson/Projects/local/aura-releases/0.35.4-visual.4-quicktalk-formal-r1/verify-preinstall.json",
+    "representativeIsolatedDeployment": "/Users/vinson/Projects/local/aura-quicktalk-integration-20261124/deployment-r11.json",
+    "checkedMainWindow": "Official Plugins entry visible in existing desktop GUI",
+    "dshHostPid": 38467,
+    "currentPackage": "/Users/vinson/Projects/local/aura-releases/0.35.4-visual.3-r1/package",
+    "currentSpeechConfig": "paraformer-realtime-v2 ASR; cosyvoice-v3-flash TTS; preserved"
+  },
+  "blocker": "Native computer-use can observe the window and route keyboard input, but AX activation of the official Plugins entry did not open it; window pointer actions returned noWindowsAvailable and ScreenCaptureKit stream error -3811. No existing usable official authenticated RPC channel was established. The dsh plugin CLI only forwards pnpm and does not safely replace the running manager workflow.",
+  "runtimeChanges": [],
+  "recovery": "Bring the actual Desktop window to the foreground in the active macOS Space (exit full screen if needed) and open the built-in Plugins page, distinct from the community marketplace. Then update through the running official manager from the frozen path, verify the old host PID and exact loaded package, and confirm Aura interaction options in a read-only UI smoke.",
+  "plannedConfiguration": "QuickTalk provider points to loopback 127.0.0.1:18765; existing token supplied only by the host private env file; preserve all other entries.",
+  "rollback": "No rollback needed because no install began. Before future updates retain the current visual.3 artifact and the desktop snapshot.",
+  "remoteReadiness": "5090 inaccessible per user. Loopback tunnel unavailable. No retry attempted during install phase.",
+  "acceptance": "Formal package activation, native interaction playback and real single-turn audiovisual response remain unverified."
+}
