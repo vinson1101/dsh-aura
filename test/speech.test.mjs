@@ -33,10 +33,19 @@ assert.equal(speechText('tts_cancelled'), '', 'an identifier alone is silent');
 assert.equal(speechText('0.26.2'), '', 'a version alone is silent');
 assert.equal(speechText('| 版本 | 现象 |'), '', 'a table row is silent');
 assert.equal(speechText('   '), '', 'whitespace is silent');
+assert.equal(speechText('……，！'), '', 'punctuation alone is silent');
 
 /* ---- prose survives ---------------------------------------------------- */
 
 assert.equal(speechText('先说结论：改好了。'), '先说结论：改好了。', 'a sentence is untouched');
+assert.equal(
+  speechText('1、2、3、4、5、6、7、8、9、10。'),
+  '1、2、3、4、5、6、7、8、9、10。',
+  'a numeric count is spoken',
+);
+assert.equal(speechText('42'), '42', 'a single numeric answer is spoken');
+assert.equal(speechText('3.14'), '3.14', 'a decimal answer is spoken');
+assert.equal(speechText('４２。'), '４２。', 'full-width digits are spoken');
 assert.equal(
   speechText('第一行\n第二行'),
   '第一行，第二行',

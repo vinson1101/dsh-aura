@@ -5,16 +5,22 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { visualConfig } from '../visual-response.js';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const output = path.resolve(process.argv[2] || '');
 if (!process.argv[2] || !output.startsWith('/Users/vinson/Projects/local/aura-releases/')) throw new Error('Explicit owned local release path required');
+const quickTalkDefaults = process.env.AURA_QUICKTALK_URL
+  ? { provider: 'quicktalk', remoteUrl: visualConfig({ provider: 'quicktalk' }).remoteUrl } : {};
 try { await fs.stat(output); throw new Error('Refusing to overwrite an existing artifact'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-const files = ['package.json', 'README.md', 'LICENSE', 'index.js', 'client.js', 'asr.js', 'tts.js',
+const files = ['assets/previews/短发直播测试/H3-比心/短发半身-双手比心.mp4',
+'assets/previews/短发直播测试/H3-逗笑对照/H3-被逗开心.mp4',
+'assets/previews/短发直播测试/首尾衔接预演/挥手统一棚景.mp4',
+'package.json', 'README.md', 'LICENSE', 'index.js', 'client.js', 'asr.js', 'tts.js',
   'visual-response.js', 'visual-settings.js', 'tasks.js', 'task-speech.js', 'instance.js', 'secrets.js',
   'tools/latentsync-response.py', 'tools/stage-local-visual.mjs', 'cordis.patch.yml', 'icon.svg', 'locale/en.json', 'locale/zh.json',
   'docs/DETAIL.md', 'docs/PANEL.md', 'docs/PROVIDERS.md', 'docs/VOICES.md',
   'assets/runtime/peach/portrait.webp', 'assets/runtime/peach/motion.webp',
-  ...['side.png', 'turn.mp4', 'listen.mp4', 'respond.mp4', 'return.mp4'].map(x => 'assets/runtime/short-hair/' + x),
+  ...['side.png', 'turn.mp4', 'listen.mp4', 'respond.mp4', 'return.mp4', 'front-loop-background-matched.mp4', 'idle-side-h3-matched.mp4', 'idle-lean.mp4', 'catalog.json'].map(x => 'assets/runtime/short-hair/' + x),
   'assets/previews/短发直播测试/无声倾听/短发正面直视-参考帧.png',
   'assets/previews/短发直播测试/无声倾听/短发正面直视-十秒无声倾听.mp4',
   'assets/previews/短发直播测试/Wan讲话-背景单独校正/Wan讲话底片-定妆棚景-10秒无声.mp4',
@@ -58,7 +64,8 @@ const defaults = { enabled: true,
   vaeDir: '/Users/vinson/Projects/local/aura-musetalk-1.5/models/sd-vae',
   python: '/Users/vinson/Projects/local/aura-musetalk-1.5/.venv/bin/python',
   ffmpeg: '/opt/homebrew/bin/ffmpeg', ffprobe: '/opt/homebrew/bin/ffprobe',
-  workDir: '/Users/vinson/Projects/local/aura-visual-response',
+  workDir: quickTalkDefaults.provider ? '/Users/vinson/Projects/local/aura-visual-response-quicktalk' : '/Users/vinson/Projects/local/aura-visual-response',
+  ...quickTalkDefaults,
 };
 const wrapper = `// Local test deployment authority. Explicit persisted values always win.\nimport { apply as applyAura } from './host-runtime.js';\nimport { readFileSync } from 'node:fs';\nexport { inject } from './host-runtime.js';\nconst defaults = JSON.parse(readFileSync(new URL('./local-visual-config.json', import.meta.url), 'utf8'));\nexport function apply(ctx, config = {}) {\n  const incoming = config.visualResponse;\n  if (incoming !== undefined && (!incoming || typeof incoming !== 'object' || Array.isArray(incoming))) throw new TypeError('visualResponse must be an object');\n  const visualResponse = { ...defaults, ...incoming };\n  if (incoming?.enabled === undefined) visualResponse.enabled = defaults.enabled;\n  return applyAura(ctx, { ...config, visualResponse });\n}\n`;
 // Retain the original public entry filename: DSH relocates linked roots only after

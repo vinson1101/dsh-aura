@@ -17,7 +17,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     // Each replacement needs its own scope. A top-level const breaks the next
     // classic-script load with a global lexical redeclaration error.
-    const AURA_VERSION = '0.35.4-visual.3';
+    const AURA_VERSION = '0.35.4-visual.4';
     diag('factory');
     /* A reload replaces this module but not the running audio graph: stop the
      * capture the previous instance left holding the microphone. */
@@ -152,8 +152,8 @@ window.__ModuleLoader__.load({
       /* Mostly letters and punctuation, almost no Chinese: an identifier list, a
        * path, a version line. Speaking it is worse than silence. */
       if (han < 2 && latin > 6) return '';
-      /* Digits, punctuation and spaces only: a version, a count, a separator. */
-      if (han === 0 && latin === 0) return '';
+      /* Keep numeric answers, but skip standalone dotted versions and separators. */
+      if (han === 0 && latin === 0 && (!/\p{Nd}/u.test(prose) || /^\d+(?:\.\d+){2,}$/.test(prose))) return '';
       return prose;
     }
 
@@ -451,8 +451,7 @@ window.__ModuleLoader__.load({
      *   cannot give; `stable` and `decoder` are therefore reported but never
      *   produced until a streaming provider is wired in.
      *
-     * Numbers are the reference's: 100 ms blocks, 900 ms of quiet, 4 s of
-     * nothing, a 12 s cap.
+     * Single-reply waits for speech separately from the audio block clock.
      */
     const CHUNK_MS = 100;
     const CHUNK_SIZE = (SAMPLE_RATE * CHUNK_MS) / 1000;
@@ -460,7 +459,7 @@ window.__ModuleLoader__.load({
     const QUIET_CHUNKS = 9;
     /** Otherwise a real pause still wins, just later. */
     const LONG_QUIET_CHUNKS = 20;
-    const NO_SPEECH_CHUNKS = 40;
+    const SINGLE_NO_SPEECH_MS = 30000;
     /** How long a loud sound must last before it counts as somebody speaking. */
     const ONSET_CHUNKS = 3;
     /** Streaming grows nothing per chunk, so a long dictation is allowed. */
@@ -471,7 +470,7 @@ window.__ModuleLoader__.load({
     const FLOOR_DECAY = 0.8;
     const NOISE_CEILING = 850;
 
-    function createVad({ onChunk, onEnd, isComplete, noSpeechChunks = NO_SPEECH_CHUNKS }) {
+    function createVad({ onChunk, onEnd, onSpeech, isComplete, noSpeechChunks }) {
       let carry = new Float32Array(0);
       let chunks = 0;
       let speech = false;
@@ -502,10 +501,10 @@ window.__ModuleLoader__.load({
         return pcm;
       }
 
-      function end(reason) {
+      function end(reason, elapsedMs = chunks * CHUNK_MS) {
         if (done) return;
         done = true;
-        onEnd(reason, speech, chunks * CHUNK_MS);
+        onEnd(reason, speech, elapsedMs);
       }
 
       function take(block) {
@@ -516,7 +515,10 @@ window.__ModuleLoader__.load({
         if (level >= threshold) {
           voiced += 1;
           /* A knock is loud for one chunk; a word is loud for several. */
-          if (voiced >= ONSET_CHUNKS) speech = true;
+          if (!speech && voiced >= ONSET_CHUNKS) {
+            speech = true;
+            onSpeech();
+          }
           quiet = 0;
         } else {
           voiced = 0;
@@ -549,6 +551,7 @@ window.__ModuleLoader__.load({
       }
 
       return {
+        get speech() { return speech; },
         push(samples) {
           if (done) return samples;
           let data = samples;
@@ -832,25 +835,26 @@ registerProcessor('aura-capture', AuraCapture);`;
       .aura-character textarea { background: rgba(25,23,29,.28) !important; color: #f5f4f6 !important; }
       .aura-character textarea::placeholder { color: #ddd8e0; }
       .aura-character .aura-id-mono { opacity: .8; text-shadow: 0 1px 3px #222; }
-      /* In the main stage, above the quiet caption. Reserve the call control's
-       * bottom strip; settings (z=6) and the play gesture (z=2) remain above it. */
-      .aura-preparation { align-self: start; box-sizing: border-box; width: 100%;
-        max-width: 420px; max-height: calc(100% - 80px); margin: 8px 0 72px;
-        padding: 14px; display: grid; gap: 10px; overflow: auto; z-index: 1;
-        border-radius: 12px; border: 1px solid var(--dsw-alias-border-l2);
-        border-inline-start: 4px solid var(--dsw-alias-state-warn-primary);
-        background: var(--dsw-alias-bg-overlay); color: var(--dsw-alias-label-primary);
-        font-size: 13px; line-height: 1.6; text-shadow: none; overflow-wrap: anywhere; }
-      .aura-preparation h3 { margin: 0; font-size: 16px; line-height: 1.45; }
-      .aura-preparation p { margin: 0; }
-      .aura-preparation-detail { color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; }
+      .aura-status { min-width: 0; line-height: 1.4; overflow-wrap: anywhere; }
+      .aura-preparation-detail { font-variant-numeric: tabular-nums; }
       /* Beside the orb, not in a settings panel: a call is an action. */
-      .aura-call { position: absolute; right: 4px; bottom: 4px; width: 52px; height: 52px;
+      .aura-actions { position: absolute; right: 4px; bottom: 4px; display: grid; gap: 6px; justify-items: end; }
+      .aura-actions-menu { position: absolute; right: 60px; bottom: 0; display: grid; gap: 4px;
+        width: min(162px, calc(100cqw - 82px)); max-height: min(255px, 100cqh); overflow: auto;
+        padding: 6px; box-sizing: border-box; z-index: 3; border-radius: 10px;
+        border: 1px solid rgba(160,170,190,.28); background: var(--dsw-alias-bg-base, #25232a);
+        color: var(--dsw-alias-text-primary, inherit); }
+      .aura-character .aura-actions-menu { background: #25232a; color: #f5f4f6; }
+      .aura-actions-menu .aura-act { display: grid; height: auto; min-height: 28px; text-align: left; padding: 4px 6px; }
+      .aura-actions-menu .aura-act:disabled { opacity: .72; }
+      .aura-actions-menu small { font-size: 10px; white-space: normal; }
+      .aura-call { width: 52px; height: 52px;
         display: grid; place-items: center; border-radius: 999px; cursor: pointer;
         border: 1px solid rgba(160,170,190,.28); background: rgba(120,132,152,.22);
         color: inherit; backdrop-filter: blur(10px);
         transition: background .15s ease, border-color .15s ease, transform .15s ease; }
       .aura-call:hover { background: rgba(120,132,152,.34); transform: scale(1.04); }
+      .aura-interactions { width: 52px; min-height: 28px; font: inherit; font-size: 12px; }
       .aura-call[data-active='true'] { background: #e5484d; border-color: transparent; color: #fff;
         animation: aura-record 1.5s ease-out infinite; }
       .aura-call[data-active='true']:hover { background: #d93d42; }
@@ -994,6 +998,7 @@ registerProcessor('aura-capture', AuraCapture);`;
     };
     const PREPARATION_STAGES = {
       preflight: '检查本地环境', tts: '生成当前女声', 'loading-models': '加载口型模型',
+      uploading: '发送当前语音', queued: '等待 QuickTalk', downloading: '接收本次音画',
       rendering: '生成口型音画', muxing: '合并本次音画', validating: '校验完整音画',
       ready: '音画就绪等待播放', '等待音画播放器就绪': '音画就绪等待播放（等待播放器就绪）',
     };
@@ -1025,6 +1030,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       maskImage: 'linear-gradient(to right, transparent, #000 8px, #000 calc(100% - 8px), transparent), linear-gradient(transparent, #000 8px, #000 calc(100% - 8px), transparent)',
       maskComposite: 'intersect',
     };
+    const MANUAL_ACTIONS = [['side', '转侧身'], ['lean', '探镜头'], ['heart', '比爱心'], ['wave', '招手'], ['smile', '微笑']];
     const CAPTION = {
       font: 'inherit',
       fontSize: 11,
@@ -1276,7 +1282,8 @@ registerProcessor('aura-capture', AuraCapture);`;
 
     /** One render job per complete reply. The POST receipt is always observed,
      * even after cancellation, so an accepted-but-late job is DELETEd as well. */
-    function createVisualPreparation({ access, request = fetch, clock = window, onStatus, diagnostic = () => {} }) {
+    function createVisualPreparation({ access, request = fetch, clock = window, onStatus, diagnostic = () => {},
+      supportsStream = mime => typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(mime) }) {
       let serial = 0, current = null;
       const remove = (job, reason = 'inactive-access') => {
         if (!job.id || job.deleted) return;
@@ -1321,15 +1328,17 @@ registerProcessor('aura-capture', AuraCapture);`;
             for (;;) {
               if (!response.ok) throw new Error(value.error || '数字人准备请求失败');
               status(value);
+              if (value.streamUrl && value.streamMime && supportsStream(value.streamMime)
+                && ['preparing', 'ready'].includes(value.state)) return value;
               if (value.state === 'ready') {
                 if (!value.mediaUrl) throw new Error('数字人结果缺少音画地址');
-                return value;
+                return { ...value, streamUrl: undefined, streamMime: undefined };
               }
               if (value.state === 'failed' || value.state === 'cancelled') throw new Error(value.error || `数字人任务 ${value.state}`);
               if (value.state !== 'preparing' || !job.id) throw new Error('数字人准备状态无效');
               await new Promise(resolve => {
                 job.wake = resolve;
-                job.timer = clock.setTimeout(() => { job.wake = null; resolve(); }, 1000);
+                job.timer = clock.setTimeout(() => { job.wake = null; resolve(); }, 250);
               });
               if (!active()) { remove(job); return null; }
               job.phase = 'poll';
@@ -1359,23 +1368,29 @@ registerProcessor('aura-capture', AuraCapture);`;
       };
     }
 
-    /** Single-task v3: the SAME ten-second frontal source/element runs through
-     * idle, listening, thinking and preparation. Only a complete muxed answer
-     * may replace it; there is no PCM/energy-driven canned response or mouth patch. */
-    function SingleCharacter({ stage, sessionId, control }) {
+    /** Silent front and idle layers preserve the last frame while the next clip decodes. */
+    function SingleCharacter({ stage, sessionId, control, onInteractionError }) {
       const surround = React.useRef(null);
       const still = React.useRef(null);
       const media = React.useRef(null);
+      const idleMedia = React.useRef(null);
+      const replyMedia = React.useRef(null);
       const player = React.useRef(null);
       const [needsPlay, setNeedsPlay] = React.useState(false);
       const desired = React.useRef(stage);
       desired.current = stage;
       React.useEffect(() => {
         let disposed = false, serial = 0, kind = '', idleTimer = 0, loadTimer = 0;
-        let assetAbort = null, objectUrl = null, frameCallback = 0, downloadTimer = 0;
+        let assetAbort = null, frameCallback = 0, downloadTimer = 0;
         let playCurrent = null, watchReadiness = null, playSerial = 0;
-        let answer = null, lastStage = desired.current;
-        const node = surround.current, image = still.current, video = media.current;
+        let answer = null, lastStage = desired.current, activated = false;
+        let lastIdle = '', lastWave = -Infinity;
+        let assets = null, catalogRequest, pendingManual = null;
+        const catalog = new AbortController();
+        const node = surround.current, image = still.current;
+        const standby = media.current, idleVideo = idleMedia.current, replyVideo = replyMedia.current;
+        const urls = new Map();
+        let video = standby, visible = null;
         const mediaState = () => ({ readyState: video.readyState, networkState: video.networkState,
           mediaError: video.error?.code || 0, mediaMessage: String(video.error?.message || '').slice(0, 180),
           paused: video.paused, time: video.currentTime, duration: video.duration,
@@ -1384,57 +1399,118 @@ registerProcessor('aura-capture', AuraCapture);`;
         diag('character_support', { sessionId, protocol: window.location.protocol,
           h264: video.canPlayType?.('video/mp4; codecs="avc1.64001F"'),
           vp9: video.canPlayType?.('video/webm; codecs="vp9"') });
-        const idle = () => desired.current === 'idle' && !answer;
+        const idle = () => activated && !['initial', 'opening', 'listening', 'speaking'].includes(desired.current) && !answer;
         const clearIdle = () => { window.clearTimeout(idleTimer); idleTimer = 0; };
-        const unload = () => {
+        const resetMedia = target => {
+          if (target.hasAttribute('src')) { target.pause(); target.removeAttribute('src'); target.load(); }
+          target.muted = true; target.style.opacity = '0';
+          if (urls.has(target)) { URL.revokeObjectURL(urls.get(target)); urls.delete(target); }
+        };
+        const stopPending = () => {
           window.clearTimeout(loadTimer); window.clearTimeout(downloadTimer);
           downloadTimer = 0; playCurrent = null; watchReadiness = null;
           assetAbort?.abort(); assetAbort = null;
           if (frameCallback) video.cancelVideoFrameCallback?.(frameCallback);
           frameCallback = 0;
           video.onloadedmetadata = video.onloadeddata = video.oncanplaythrough = video.onplaying = video.onwaiting = video.onpause = video.onended = video.onerror = null;
-          video.pause(); video.removeAttribute('src'); video.load(); video.style.opacity = '0';
-          if (objectUrl) URL.revokeObjectURL(objectUrl);
-          objectUrl = null;
           if (!disposed) setNeedsPlay(false);
         };
+        const unload = () => {
+          stopPending();
+          for (const target of [standby, idleVideo, replyVideo]) resetMedia(target);
+          visible = null;
+          image.style.visibility = 'visible';
+        };
+        const playable = runtime => runtime?.enabled === true && runtime.audio === 'silent'
+          && /^\/aura\/character\/[a-z0-9-]+\.mp4$/.test(runtime.src);
+        const loadCatalog = () => {
+          catalogRequest ??= fetch('/aura/character/catalog.json', { signal: catalog.signal, credentials: 'same-origin' })
+            .then(response => {
+              if (!response.ok) throw new Error('素材目录暂不可用');
+              return response.json();
+            }).then(manifest => {
+              if (manifest.schemaVersion !== 1 || !Array.isArray(manifest.assets)) return null;
+              return manifest.assets.filter(clip => typeof clip?.id === 'string' && clip.id !== 'front' && clip.id !== 'answer'
+                && Array.isArray(clip.runtime?.roles));
+            }).catch(() => null);
+          return catalogRequest;
+        };
+        const canPreview = () => !disposed && !document.hidden && !answer && !['opening', 'listening', 'speaking'].includes(desired.current);
         const armIdle = () => {
           clearIdle();
-          if (!disposed && idle() && kind === 'front') idleTimer = window.setTimeout(() => {
+          if (disposed || !idle() || visible !== standby || kind !== 'front' || document.hidden) return;
+          if (assets === null) {
+            void loadCatalog().then(rows => {
+              assets = rows || [];
+              armIdle();
+            });
+            return;
+          }
+          const idleClips = assets.filter(({ runtime }) => playable(runtime) && runtime.roles.includes('idle-interaction')
+            && runtime.poseFamily === 'frontal-half' && runtime.backgroundFamily === 'aura-studio');
+          if (idleClips.length) idleTimer = window.setTimeout(() => {
             idleTimer = 0;
-            if (!disposed && idle() && kind === 'front') show('return');
-          }, 300000);
+            if (disposed || !idle() || document.hidden) return;
+            const eligible = idleClips.filter(clip => !clip.runtime.wave || window.performance.now() - lastWave >= 120000);
+            const alternatives = eligible.filter(clip => clip.id !== lastIdle);
+            const pool = alternatives.length ? alternatives : eligible;
+            if (!pool.length) { armIdle(); return; }
+            show(pool[Math.floor(Math.random() * pool.length)].id);
+          }, 35000 + Math.floor(Math.random() * 30001));
         };
         const finishAnswer = error => {
           const old = answer; answer = null;
           if (old) { if (error) old.reject(error); else old.resolve(); }
         };
-        const showSide = () => {
-          serial++; unload(); kind = 'side';
-          image.src = '/aura/character/side.png'; video.style.opacity = '0';
+        const showStill = next => {
+          serial++; unload(); kind = next; video = standby;
+          const source = next === 'side' ? '/aura/character/side.png' : '/aura/character/short-hair.png';
+          if (image.getAttribute('src') !== source) image.src = source;
           node.dataset.auraClip = kind;
+          node.dataset.auraAudio = 'quiet';
+          armIdle();
         };
-        const show = (next, reply = null) => {
+        const show = (next, reply = null, manual = false) => {
           if (disposed) return;
           clearIdle();
           const ticket = ++serial;
-          unload(); kind = next;
-          node.dataset.auraClip = next; node.dataset.auraAudio = 'quiet';
+          const interaction = assets?.find(clip => clip.id === next);
+          const target = next === 'answer' ? replyVideo : interaction ? idleVideo : standby;
+          const resumeFront = target === standby && standby.getAttribute('src');
+          stopPending();
+          if (video === replyVideo || (video === idleVideo && !interaction)) {
+            video.muted = true; video.pause();
+          }
+          for (const layer of [standby, idleVideo, replyVideo]) {
+            if (layer !== visible && (layer !== standby || !layer.getAttribute('src'))) resetMedia(layer);
+          }
+          kind = interaction ? 'interaction' : next;
+          video = target;
+          node.dataset.auraAudio = 'quiet';
           video.muted = next !== 'answer'; video.loop = next === 'front';
-          image.src = '/aura/character/short-hair.png';
+          if (next === 'front') image.src = '/aura/character/short-hair.png';
           const current = () => !disposed && ticket === serial;
           const fail = failure => {
             if (!current()) return;
             const reason = failure?.type || failure?.name || 'load-timeout';
             diag('character_fallback', { sessionId, clip: next, reason,
               message: String(failure?.message || '').slice(0, 180), ...mediaState() });
-            if (next !== 'answer') void fetch(`/aura/character/${next}.mp4`, { method: 'HEAD', cache: 'no-store' })
+            if (next !== 'answer') void fetch(source, { method: 'HEAD', cache: 'no-store' })
               .then(response => diag('character_asset_probe', { sessionId, clip: next,
                 status: response.status, type: response.headers.get('content-type'),
                 length: response.headers.get('content-length'), ranges: response.headers.get('accept-ranges') }))
               .catch(error => diag('character_asset_probe', { sessionId, clip: next, error: String(error?.message || error).slice(0, 180) }));
-            if (answer) finishAnswer(new Error(`当前回复音画无法播放（${reason}）；未回退到旧视频或独立语音。`));
-            serial++; unload(); video.style.opacity = '0'; kind = 'fallback'; node.dataset.auraClip = kind;
+            if (answer) {
+              finishAnswer(new Error(`当前回复音画无法播放（${reason}）`));
+              if (next === 'answer' && activated) { show('front'); return; }
+            }
+            if (interaction) {
+              if (manual) onInteractionError?.('这段动作暂时无法播放。');
+              show('front'); return;
+            }
+            serial++; stopPending(); resetMedia(video);
+            if (visible === video) { visible = null; image.style.visibility = 'visible'; }
+            kind = 'fallback'; node.dataset.auraClip = visible === standby ? 'front' : 'fallback';
           };
           let ready = false, sourceAssigned = false;
           const play = () => {
@@ -1442,7 +1518,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             const attempt = ++playSerial;
             video.play()?.catch(error => {
               if (!current() || attempt !== playSerial) return;
-              if (error?.name === 'NotAllowedError') {
+              if (error?.name === 'NotAllowedError' && next === 'answer') {
                 setNeedsPlay(true);
                 diag('character_gesture_required', { sessionId, clip: next, ...mediaState() });
               } else fail(error);
@@ -1460,42 +1536,134 @@ registerProcessor('aura-capture', AuraCapture);`;
           };
           // The Host has already finished muxing the full AV file. Wait for
           // decoder readiness too; never start a second independent audio clock.
-          video.oncanplaythrough = next === 'answer' ? () => {
+          video.oncanplaythrough = next === 'answer' && !reply?.streamUrl ? () => {
             if (!current()) return;
             ready = true; window.clearTimeout(loadTimer); play();
           } : null;
-          video.onplaying = () => {
+          const reveal = () => {
             if (!current()) return;
-            window.clearTimeout(loadTimer); video.style.opacity = '1'; setNeedsPlay(false);
-            if (next === 'answer') { node.dataset.auraAudio = 'playing'; answer?.onPlaying?.(); }
+            const previous = visible;
+            visible = video;
+            if (previous && previous !== video) {
+              if (previous === standby) { previous.pause(); previous.style.opacity = '0'; }
+              else resetMedia(previous);
+            }
+            video.style.opacity = '1';
+            image.style.visibility = 'hidden';
+            node.dataset.auraClip = next;
+            if (interaction && previous !== video) {
+              lastIdle = next;
+              if (interaction.runtime.wave) lastWave = window.performance.now();
+            }
+            if (next === 'front' && idle() && !idleTimer) armIdle();
+            if (next === 'answer') {
+              activated = true;
+              node.dataset.auraAudio = 'playing';
+              answer?.onPlaying?.();
+            }
+          };
+          video.onplaying = () => {
+            if (!current() || !ready) return;
+            window.clearTimeout(loadTimer); setNeedsPlay(false);
+            reveal();
+            if (next === 'front' && pendingManual) {
+              const queued = pendingManual; pendingManual = null;
+              if (canPreview()) { show(queued, null, true); return; }
+            }
             diag('character_clip', { sessionId, clip: next, ...mediaState() });
             if (!frameCallback && video.requestVideoFrameCallback) {
-              let frames = 0;
+              let frames = 0, since = performance.now(), lastMedia = null, maxMediaStep = 0;
+              let startQuality = video.getVideoPlaybackQuality?.();
               const observe = (_now, metadata) => {
                 frameCallback = 0;
                 if (!current()) return;
-                diag('character_frame', { sessionId, clip: next, mediaTime: metadata.mediaTime,
-                  presentedFrames: metadata.presentedFrames, ...mediaState() });
-                if (++frames < 3) frameCallback = video.requestVideoFrameCallback(observe);
+                if (lastMedia !== null) maxMediaStep = Math.max(maxMediaStep, metadata.mediaTime - lastMedia);
+                lastMedia = metadata.mediaTime; frames++;
+                const elapsed = _now - since;
+                if (elapsed >= 1000) {
+                  const quality = video.getVideoPlaybackQuality?.();
+                  diag('character_playback_stats', { sessionId, clip: next,
+                    observedFps: frames * 1000 / elapsed, maxMediaStep,
+                    decodedFrames: quality ? quality.totalVideoFrames - (startQuality?.totalVideoFrames || 0) : null,
+                    droppedFrames: quality ? quality.droppedVideoFrames - (startQuality?.droppedVideoFrames || 0) : null,
+                    bufferAhead: video.buffered.length ? video.buffered.end(video.buffered.length - 1) - video.currentTime : 0,
+                    ...mediaState() });
+                  since = _now; frames = 0; maxMediaStep = 0; startQuality = quality;
+                }
+                frameCallback = video.requestVideoFrameCallback(observe);
               };
               frameCallback = video.requestVideoFrameCallback(observe);
             }
           };
           video.onwaiting = video.onpause = () => {
-            if (!current() || next !== 'answer') return;
+            if (!current() || next !== 'answer' || node.dataset.auraClip !== 'answer') return;
+            diag('character_playback_wait', { sessionId, clip: next, ...mediaState() });
             node.dataset.auraAudio = 'quiet'; answer?.onWaiting?.();
           };
           video.onended = () => {
             if (!current()) return;
-            if (next === 'answer') { finishAnswer(); show('front'); armIdle(); }
-            else if (next === 'return' && idle()) showSide();
-            else if (next === 'turn' && answer) show('answer', answer);
-            else { show('front'); armIdle(); }
+            if (next === 'answer') { finishAnswer(); show('front'); }
+            else if (interaction) show('front');
           };
           video.onerror = fail;
           // Answer loading has honest preparation UI, not a fake 5s success.
-          const source = next === 'answer' ? reply.mediaUrl : `/aura/character/${next}.mp4`;
-          if (window.location.protocol === 'dsh-app:') {
+          const source = next === 'answer' ? reply.mediaUrl : interaction?.runtime.src || '/aura/character/front.mp4';
+          if (resumeFront) {
+            sourceAssigned = true; ready = video.readyState >= 2;
+            watchReadiness();
+            play();
+          } else if (next === 'answer' && reply.streamUrl) {
+            assetAbort = new AbortController();
+            const signal = assetAbort.signal;
+            const mse = new MediaSource();
+            const objectUrl = URL.createObjectURL(mse);
+            urls.set(video, objectUrl);
+            sourceAssigned = true; video.src = objectUrl; video.load(); watchReadiness();
+            // One SourceBuffer carries both tracks and their original timestamps.
+            const waitEvent = (target, event) => new Promise((resolve, reject) => {
+              const clean = () => { target.removeEventListener(event, done); target.removeEventListener('error', failed); signal.removeEventListener('abort', aborted); };
+              const done = () => { clean(); resolve(); };
+              const failed = () => { clean(); reject(new Error('音画流解码失败')); };
+              const aborted = () => { clean(); reject(new DOMException('Cancelled', 'AbortError')); };
+              if (signal.aborted) return aborted();
+              target.addEventListener(event, done, { once: true }); target.addEventListener('error', failed, { once: true });
+              signal.addEventListener('abort', aborted, { once: true });
+            });
+            void (async () => {
+              await waitEvent(mse, 'sourceopen');
+              if (!current() || signal.aborted) return;
+              const buffer = mse.addSourceBuffer(reply.streamMime);
+              const response = await fetch(reply.streamUrl, { signal, credentials: 'same-origin', cache: 'no-store' });
+              if (!response.ok || !response.body) throw new Error('音画流读取失败');
+              const reader = response.body.getReader(); let bytes = 0;
+              try {
+                for (;;) {
+                  let deadline;
+                  const nextChunk = await Promise.race([reader.read(), new Promise((_, reject) => {
+                    deadline = window.setTimeout(() => reject(new Error('音画流等待超时')), 30000);
+                  })]).finally(() => window.clearTimeout(deadline));
+                  const { done, value } = nextChunk;
+                  if (done) break;
+                  if (!current() || signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+                  bytes += value.byteLength;
+                  if (bytes > 128 * 1024 * 1024) throw new Error('音画流超过播放上限');
+                  const appended = waitEvent(buffer, 'updateend'); appended.catch(() => {});
+                  buffer.appendBuffer(value); await appended;
+                  // Start with a small cushion, not canplaythrough (unbounded stream).
+                  if (!ready && buffer.buffered.length && buffer.buffered.end(0) >= 0.75) {
+                    ready = true; window.clearTimeout(loadTimer); play();
+                  }
+                  if (video.currentTime > 30 && buffer.buffered.length && buffer.buffered.start(0) < video.currentTime - 25) {
+                    const removed = waitEvent(buffer, 'updateend'); removed.catch(() => {}); buffer.remove(0, video.currentTime - 20); await removed;
+                  }
+                }
+                if (!current() || signal.aborted) return;
+                mse.endOfStream();
+                if (!ready) { ready = true; window.clearTimeout(loadTimer); play(); }
+                diag('character_stream_complete', { sessionId, bytes, ...mediaState() });
+              } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+            })().catch(error => { if (current() && !signal.aborted) fail(error); });
+          } else if (window.location.protocol === 'dsh-app:') {
             // Desktop's custom-protocol media loader cannot open these MP4s,
             // although the same authenticated fetch succeeds. Hand the one
             // video element a bounded, complete Blob instead. No second clock.
@@ -1524,7 +1692,8 @@ registerProcessor('aura-capture', AuraCapture);`;
                 }
               } finally { if (!current() || bytes > limit || signal.aborted) await reader.cancel().catch(() => {}); reader.releaseLock(); }
               if (!current() || signal.aborted) return;
-              objectUrl = URL.createObjectURL(new Blob(chunks, { type: 'video/mp4' }));
+              const objectUrl = URL.createObjectURL(new Blob(chunks, { type: 'video/mp4' }));
+              urls.set(video, objectUrl);
               sourceAssigned = true; video.src = objectUrl; video.load(); watchReadiness?.();
               diag('character_asset_loaded', { sessionId, clip: next, bytes, transport: 'authenticated-blob' });
             })().catch(fail).finally(() => {
@@ -1532,36 +1701,70 @@ registerProcessor('aura-capture', AuraCapture);`;
               if (downloadTimer === deadline) downloadTimer = 0;
             });
           } else { sourceAssigned = true; video.src = source; video.load(); watchReadiness(); }
-          if (next === 'front') armIdle();
         };
         const sync = () => {
           if (disposed) return;
           node.dataset.auraState = desired.current;
           if (lastStage !== desired.current) {
-            lastStage = desired.current; clearIdle();
-            if (idle()) armIdle();
+            lastStage = desired.current;
+            if (idle()) {
+              if (!idleTimer) armIdle();
+            } else {
+              clearIdle();
+              pendingManual = null;
+              if (kind === 'interaction') show('front');
+            }
           }
-          // A sideways interaction turns completely; state changes never skip
-          // turn.mp4. Microphone capture is independently started by Pane.
-          if (!idle() && (kind === 'side' || kind === 'return')) show('turn');
-          else if (!kind) show('front');
+          if (!kind) showStill('side');
+          if (desired.current === 'listening') {
+            activated = true;
+            if (kind !== 'front' && kind !== 'answer') show('front');
+          }
         };
         const visibility = () => {
-          if (document.hidden) { playSerial++; window.clearTimeout(loadTimer); video.pause(); }
-          else if (kind !== 'side' && kind !== 'fallback') { watchReadiness?.(); playCurrent?.(); }
+          if (document.hidden) {
+            pendingManual = null; clearIdle();
+            if (kind === 'interaction') show('front');
+            playSerial++; window.clearTimeout(loadTimer); video.pause();
+            if (visible !== video) visible?.pause();
+          } else if (kind !== 'side' && kind !== 'fallback') {
+            if (kind === 'answer' && visible === standby) void standby.play()?.catch(() => {});
+            watchReadiness?.(); playCurrent?.();
+            if (idle() && !idleTimer) armIdle();
+          }
         };
         const api = {
           sync,
-          activity() { clearIdle(); if (idle()) armIdle(); },
+          async interactions() {
+            const rows = await loadCatalog();
+            assets = rows || [];
+            return rows && rows.filter(({ runtime }) => runtime.roles.includes('manual-interaction')).map(({ id, runtime }) => ({
+              id, action: runtime.manualAction,
+              available: playable(runtime),
+              reason: runtime.disabledReason,
+            }));
+          },
+          preview(id) {
+            if (!canPreview()) return false;
+            const item = assets?.find(clip => clip.id === id && clip.runtime.roles.includes('manual-interaction'));
+            if (!item || !playable(item.runtime)) return false;
+            activated = true;
+            if (kind === 'interaction' || visible === idleVideo) { pendingManual = id; show('front'); }
+            else show(id, null, true);
+            return true;
+          },
+          activity() {
+            pendingManual = null; clearIdle();
+            if (kind === 'interaction') show('front');
+            else if (idle()) armIdle();
+          },
           playReply(reply) {
             if (disposed || reply.sessionId !== sessionId) return Promise.reject(new Error('数字人会话已失效'));
             finishAnswer(new Error('数字人回复被替换'));
-            clearIdle();
+            pendingManual = null; clearIdle();
             return new Promise((resolve, reject) => {
               answer = { ...reply, resolve, reject };
-              if (kind === 'turn') return; // Complete the existing turn first.
-              if (kind === 'side' || kind === 'return') show('turn');
-              else show('answer', answer);
+              show('answer', answer);
             });
           },
           resume() { if (!disposed) playCurrent?.(); },
@@ -1569,7 +1772,10 @@ registerProcessor('aura-capture', AuraCapture);`;
             if (disposed) return;
             finishAnswer(new Error('数字人回复已取消'));
             node.dataset.auraAudio = 'quiet';
-            if (kind === 'answer') show('front');
+            if (kind === 'answer') {
+              if (activated) show('front');
+              else showStill('side');
+            }
             armIdle();
           },
         };
@@ -1577,26 +1783,30 @@ registerProcessor('aura-capture', AuraCapture);`;
         document.addEventListener('visibilitychange', visibility);
         sync();
         return () => {
-          disposed = true; serial++; clearIdle(); finishAnswer(new Error('数字人播放器已关闭')); unload();
+          disposed = true; serial++; clearIdle(); catalog.abort(); finishAnswer(new Error('数字人播放器已关闭')); unload();
           document.removeEventListener('visibilitychange', visibility);
           if (control.current === api) control.current = null;
           player.current = null;
         };
-      }, [sessionId, control]);
+      }, [sessionId, control, onInteractionError]);
       React.useEffect(() => { player.current?.sync(); }, [stage]);
       const layer = { ...CHARACTER_IMAGE, position: 'absolute', inset: 0,
-        width: '100%', height: '100%', maxWidth: '100%', maxHeight: '100%', maskImage: 'none' };
+        width: '100%', height: '100%', maxWidth: '100%', maxHeight: '100%', objectFit: 'cover', maskImage: 'none' };
       const mediaBox = { position: 'relative', flex: '0 0 auto',
         width: 'min(100cqw, calc(100cqh * 1113 / 1414))',
         height: 'min(100cqh, calc(100cqw * 1414 / 1113))',
         maskImage: CHARACTER_IMAGE.maskImage, maskComposite: CHARACTER_IMAGE.maskComposite };
       return h(React.Fragment, null, h('div', { ref: surround, style: { ...CHARACTER_SURROUND, containerType: 'size' },
         'data-aura-visual': 'single-character', 'data-aura-state': stage,
-        'data-aura-clip': 'front', 'data-aura-audio': 'quiet' },
+        'data-aura-clip': 'side', 'data-aura-audio': 'quiet' },
         h('div', { style: mediaBox, 'data-aura-media-box': true },
-          h('img', { ref: still, src: '/aura/character/short-hair.png', style: layer,
-            alt: 'Aura · 正面待机；10 秒循环接缝可能可见', draggable: false }),
+          h('img', { ref: still, src: '/aura/character/side.png', style: layer,
+            alt: 'Aura 定妆像', draggable: false }),
           h('video', { ref: media, style: { ...layer, opacity: 0 }, muted: true,
+            playsInline: true, preload: 'auto', 'aria-hidden': true }),
+          h('video', { ref: idleMedia, 'data-aura-idle-player': true, style: { ...layer, opacity: 0 }, muted: true,
+            playsInline: true, preload: 'none', 'aria-hidden': true }),
+          h('video', { ref: replyMedia, 'data-aura-reply-player': true, style: { ...layer, opacity: 0 }, muted: true,
             playsInline: true, preload: 'auto', 'aria-hidden': true }))),
         needsPlay ? h('button', { type: 'button', 'data-aura-play': true, onClick: () => player.current?.resume(),
           style: { position: 'absolute', top: '55%', left: '50%', transform: 'translate(-50%, -50%)',
@@ -1630,9 +1840,17 @@ registerProcessor('aura-capture', AuraCapture);`;
        * the mode before the preference state is declared. */
       const modeRef = React.useRef('talk');
       const [talking, setTalking] = React.useState(false);
-      const [singleStage, setSingleStage] = React.useState('idle');
+      const [singleStage, setSingleStage] = React.useState('initial');
+      const [interactionOpen, setInteractionOpen] = React.useState(false);
+      const [interactionAssets, setInteractionAssets] = React.useState(undefined);
+      const [interactionNotice, setInteractionNotice] = React.useState('');
+      const showInteractionError = React.useCallback(message => {
+        setInteractionNotice(message);
+        setInteractionOpen(true);
+      }, []);
       const characterControl = React.useRef(null);
       const [visualStatus, setVisualStatus] = React.useState(null);
+      const [visualNotice, setVisualNotice] = React.useState('');
       const [preparationSeconds, setPreparationSeconds] = React.useState(0);
       const visualPreparation = React.useRef(null);
       const visualStarted = React.useRef(0);
@@ -1965,6 +2183,7 @@ registerProcessor('aura-capture', AuraCapture);`;
           silencedThrough.current = Math.max(silencedThrough.current, observedTurn.current);
           speakGeneration.current += 1;
           visualPreparation.current?.cancel(options.reason || 'explicit-stop');
+          setVisualNotice(options.reason === 'silence-button' && visualBusy.current ? '已停止本次回答音画' : '');
           visualBusy.current = false;
           setVisualStatus(null);
           speakQueue.current = Promise.resolve();
@@ -1987,7 +2206,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         if (modeRef.current === 'talk' && (cancel || !runningRef.current)) {
           // Stopping an old answer must not send a newly opened microphone back
           // to idle (including barge-in partials before this utterance is final).
-          setSingleStage(captureRef.current || pendingCapture.current ? 'listening' : 'idle');
+          setSingleStage(captureRef.current ? 'listening' : pendingCapture.current ? 'opening' : 'idle');
         }
         setTalking(false);
         gateRef.current.active = false;
@@ -2051,6 +2270,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               if (replyModel !== 'cosyvoice-v3-flash' || !VOICES.some(item => item.id === replyVoice && item.trait.endsWith('女'))) {
                 throw new Error('单句数字人需要女声音色和 CosyVoice 3.0 Flash（非 3.5）。请打开 Aura 设置，选择龙颜/龙婉等已列出的女声及 3.0；不会自动换声。任务执行不受影响，回复文本可在会话中查看。');
               }
+              setVisualNotice('');
               visualBusy.current = true;
               visualStarted.current = Date.now();
               setPreparationSeconds(0);
@@ -2068,7 +2288,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               setVisualStatus({ ...ready, state: 'preparing', stage: '等待音画播放器就绪' });
               const player = characterControl.current;
               if (!player) throw new Error('数字人播放器不可用');
-              await player.playReply({ mediaUrl: ready.mediaUrl, sessionId: props.sessionId,
+              await player.playReply({ mediaUrl: ready.mediaUrl, streamUrl: ready.streamUrl, streamMime: ready.streamMime, sessionId: props.sessionId,
                 onPlaying() { if (current()) { setTalking(true); setSingleStage('speaking'); setVisualStatus(null); } },
                 onWaiting() { if (current()) { setTalking(false); setSingleStage('prepare');
                   setVisualStatus({ state: 'preparing', stage: '音画缓冲', elapsedSeconds: 0 }); } },
@@ -2723,7 +2943,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         setHeard('');
         if (modeRef.current === 'talk') {
           if (prefsRef.current.character) { stopSpeaking({ reason: 'mic-start' }); characterControl.current?.activity(); }
-          setSingleStage('listening');
+          setSingleStage('opening');
         }
         partialRef.current = { text: '', at: 0 };
         const turn = {
@@ -2782,7 +3002,9 @@ registerProcessor('aura-capture', AuraCapture);`;
               if (settled) return;
               settled = true; turn.finishing = true;
               if (record) record.feed = hold;
-              window.clearTimeout(turn.timer); resolve(result);
+              window.clearTimeout(turn.timer);
+              window.clearTimeout(turn.noSpeechTimer);
+              resolve(result);
             };
             socket.onmessage = (event) => {
               if (!current()) return;
@@ -2897,9 +3119,8 @@ registerProcessor('aura-capture', AuraCapture);`;
           }
 
           const vad = createVad({
-            /* On a call the microphone stays open until spoken to; the 4 s
-             * "nobody said anything" rule belongs to turn-taking. */
-            noSpeechChunks: prefsRef.current.mode === 'chat' ? 600 : NO_SPEECH_CHUNKS,
+            noSpeechChunks: prefsRef.current.mode === 'chat' ? MAX_CHUNKS : Infinity,
+            onSpeech() { window.clearTimeout(turn.noSpeechTimer); },
             onChunk(pcm, level, peak) {
               if (!turn.started) return;
               try {
@@ -2923,6 +3144,7 @@ registerProcessor('aura-capture', AuraCapture);`;
               diag('capture_end', { reason, ms, speech: spoke });
               if (reason === 'no_speech' && prefsRef.current.mode !== 'chat') {
                 stopCapture('no-speech');
+                setError('30 秒内未听到讲话，请再点麦克风重试。');
                 return;
               }
               finishTurn(reason);
@@ -3005,6 +3227,13 @@ registerProcessor('aura-capture', AuraCapture);`;
           captureRef.current = record;
           openingRef.current = false;
           setListening(true);
+          if (modeRef.current === 'talk' && !turn.finishing && !vad.speech) {
+            // Buffered samples can flush in a burst. Count visible listening time instead.
+            const listeningAt = Date.now();
+            turn.noSpeechTimer = window.setTimeout(() => {
+              if (current() && !turn.finishing && modeRef.current === 'talk') vad.end('no_speech', Date.now() - listeningAt);
+            }, SINGLE_NO_SPEECH_MS);
+          }
           diag('mic_start', { rate: audio.sampleRate, id });
         } catch (failure) {
           if (pendingCapture.current === turn) pendingCapture.current = null;
@@ -3080,13 +3309,38 @@ registerProcessor('aura-capture', AuraCapture);`;
         }
       };
 
+      const usesQuickTalk = visualConfig?.provider === 'quicktalk';
+      const generationLabel = usesQuickTalk ? 'QuickTalk 回复生成' : '本地回复生成';
       const preparationStage = visualStatus?.state === 'ready' ? PREPARATION_STAGES.ready
+        : visualStatus?.provider === 'quicktalk' && visualStatus.stage === 'preflight' ? '连接 QuickTalk'
         : PREPARATION_STAGES[visualStatus?.stage] || visualStatus?.stage || visualStatus?.state;
       const preparationElapsed = Math.max(preparationSeconds, Math.floor(visualStatus?.elapsedSeconds || 0));
       const preparationProgress = Number.isFinite(visualStatus?.progress?.step) && Number.isFinite(visualStatus?.progress?.steps)
         ? ` · ${visualStatus.progress.step}/${visualStatus.progress.steps}` : '';
       const playbackBuffering = visualStatus?.stage === '音画缓冲';
       const playbackPending = visualStatus?.state === 'ready' || visualStatus?.stage === '等待音画播放器就绪';
+      const caption = listening ? '正在收音' : transcribing ? '正在转写' : singleStage === 'opening' ? '正在开启麦克风'
+        : visualNotice || (talking ? '正在回答' : running || pendingTaskCount > 0 || singleStage === 'waiting' ? '等待回答'
+          : prefs.character && !callActive ? `${singleStage === 'initial' ? '未开始' : '待机'} · 麦克风关闭` : heard || phase);
+      const interactionBlock = !prefs.character ? '请先显示数字人' : callActive ? '请先结束通话'
+        : listening || singleStage === 'opening' || transcribing ? '请先结束收音' : talking ? '回答正在播放' : '';
+      const toggleInteractions = () => {
+        if (interactionOpen) { setInteractionOpen(false); return; }
+        setInteractionOpen(true);
+        setInteractionNotice('');
+        setInteractionAssets(undefined);
+        const player = characterControl.current;
+        if (player) void player.interactions().then(setInteractionAssets);
+        else setInteractionAssets(null);
+      };
+      const previewInteraction = id => {
+        if (interactionBlock || !characterControl.current?.preview(id)) {
+          setInteractionNotice(interactionBlock || '回答即将播放，暂不能预览。');
+          return;
+        }
+        if (singleStage === 'initial') setSingleStage('idle');
+        setInteractionOpen(false);
+      };
 
       return h(
         'div',
@@ -3094,6 +3348,7 @@ registerProcessor('aura-capture', AuraCapture);`;
           'data-aura-phase': phase, ref: paneRef },
         prefs.character && !callActive ? h(SingleCharacter, {
           stage: listening ? 'listening' : visualBusy.current ? singleStage : (running || pendingTaskCount > 0) ? 'waiting' : error ? 'idle' : singleStage, sessionId: props.sessionId, control: characterControl,
+          onInteractionError: showInteractionError,
         }) : prefs.character ? h('div', { style: CHARACTER_SURROUND, 'data-aura-visual': 'portrait' },
           h('img', { src: '/aura/character/short-hair.png', style: CHARACTER_IMAGE,
             width: 1113, height: 1414, alt: 'Aura 短发正面半身 · 静态', draggable: false,
@@ -3246,15 +3501,15 @@ registerProcessor('aura-capture', AuraCapture);`;
                   '显示数字人'),
                 h('div', { 'data-aura-visual-config': true, style: { display: 'grid', gap: 6, margin: '8px 0' } },
                   h('div', { role: 'status', 'aria-live': 'polite' },
-                    `本地回复生成：${visualConfigAvailable ? visualConfig.enabled ? '已启用' : '已关闭' : '状态不可用'}`),
+                    `${generationLabel}：${visualConfigAvailable ? visualConfig.enabled ? '已启用' : '已关闭' : '状态不可用'}`),
                   h('div', { className: 'aura-row' },
                     h('button', { type: 'button', className: 'aura-act',
-                      'aria-label': '切换本地回复生成',
+                      'aria-label': `切换${generationLabel}`,
                       disabled: !!visualConfigRequest || configSaveBlocked || !visualConfigAvailable || !visualConfig?.editable,
                       onClick: saveVisualConfig },
-                    visualConfigRequest === 'post' ? '正在保存…' : visualConfigAvailable && visualConfig.enabled ? '关闭本地回复生成' : '启用本地回复生成'),
+                    visualConfigRequest === 'post' ? '正在保存…' : (visualConfigAvailable && visualConfig.enabled ? '关闭' : '启用') + generationLabel),
                     h('button', { type: 'button', className: 'aura-act',
-                      'aria-label': '刷新本地回复生成状态', disabled: !!visualConfigRequest,
+                      'aria-label': `刷新${generationLabel}状态`, disabled: !!visualConfigRequest,
                       onClick: refreshVisualConfig }, visualConfigRequest === 'get' ? '读取状态…' : '刷新状态')),
                   visualConfigRequest === 'post' ? h('div', { role: 'status' }, '正在保存配置；成功后 Aura 将重启，请重新打开 Aura。') : null,
                   visualConfigAvailable && !visualConfig.editable ? h('div', { className: 'aura-id-mono' }, visualConfig.reason || '此配置当前不可编辑。') : null,
@@ -3263,7 +3518,8 @@ registerProcessor('aura-capture', AuraCapture);`;
                   h('div', { className: 'aura-id-mono', style: { whiteSpace: 'normal', lineHeight: 1.5 } },
                     `环境：未检测（只读取配置，不执行 TTS 或模型预检）。${visualConfigAvailable ? ` Host v${visualConfig.version}` : ''}`)),
                 h('div', { className: 'aura-id-mono', style: { whiteSpace: 'normal', lineHeight: 1.5 } },
-                  '单句数字人需选择女声 + CosyVoice 3.0 Flash（非 3.5）；不自动换声。本地离线生成可能约 54 分钟（非实时）；10 秒正面循环有接缝。'),
+                  '单句数字人需选择女声 + CosyVoice 3.0 Flash（非 3.5），不自动换声。关麦后进入低频互动。'
+                    + (usesQuickTalk ? '' : '本地离线生成曾耗时约 54 分钟（非实时）。')),
                 h('div', { className: 'aura-cap' }, '头像'),
                 h(
                   'div',
@@ -3315,39 +3571,46 @@ registerProcessor('aura-capture', AuraCapture);`;
           { style: STAGE, role: 'group', 'aria-label': `Aura ${visualPhase}` },
           prefs.character ? null : h('canvas', { ref: canvasRef, style: CANVAS,
             'data-aura-visual': 'orb', 'aria-hidden': true }),
-          visualStatus ? h('section', { className: 'aura-preparation', 'data-aura-preparation': true,
-            role: 'group', 'aria-label': '本次回答音画准备' },
-            h('h3', null, playbackBuffering ? '文字已回复，音画正在缓冲'
-              : playbackPending ? '文字已回复，音画就绪等待播放' : '文字已回复，音画仍在生成'),
-            h('p', null, playbackBuffering ? '本次回答音画正在缓冲，恢复后继续播放'
-              : '当前为待机画面，完成后自动播放本次回答'),
-            h('p', null, '请留在本会话；切换、关闭或刷新会取消本次生成'),
-            h('p', null, '非实时生成，可能耗时数分钟或更久'),
-            // Only stage changes are live. Elapsed ticks never re-announce the
-            // heading, cancellation warning, or other long instructions.
-            h('p', { role: 'status', 'aria-live': 'polite', 'aria-atomic': true }, preparationStage),
-            h('p', { className: 'aura-preparation-detail', 'aria-live': 'off' },
-              `已用 ${preparationElapsed} 秒${preparationProgress}`)) : null,
-          h(
-            'button',
-            {
-              type: 'button',
-              className: 'aura-call',
-              'data-active': String(callActive),
-              title: callActive ? '挂断' : '通话',
-              'aria-label': callActive ? 'End call' : 'Start call',
-              'aria-pressed': String(callActive),
-              disabled: visualConfigRequest === 'post',
-              onClick: toggleCall,
-            },
-            callActive ? h(HangupIcon, null) : h(PhoneIcon, null),
+          h('div', { className: 'aura-actions' },
+            h('button', {
+                type: 'button',
+                className: 'aura-call',
+                'data-active': String(callActive),
+                title: callActive ? '挂断' : '通话',
+                'aria-label': callActive ? 'End call' : 'Start call',
+                'aria-pressed': String(callActive),
+                disabled: visualConfigRequest === 'post',
+                onClick: toggleCall,
+              },
+              callActive ? h(HangupIcon, null) : h(PhoneIcon, null)),
+            h('button', { type: 'button', className: 'aura-act aura-interactions', 'aria-expanded': interactionOpen,
+              onClick: toggleInteractions }, '互动'),
+            interactionOpen ? h('div', { className: 'aura-actions-menu', role: 'group', 'aria-label': '动作预览',
+              onKeyDown: event => { if (event.key === 'Escape') setInteractionOpen(false); } },
+              h('small', null, '动作预览'),
+              MANUAL_ACTIONS.map(([action, label]) => {
+                const asset = interactionAssets?.find(item => item.action === action);
+                const reason = interactionBlock || (interactionAssets === undefined ? '正在读取素材'
+                  : interactionAssets === null ? '素材目录不可用' : !asset?.available ? asset?.reason || '暂无可用素材' : '');
+                return h('button', { key: action, type: 'button', className: 'aura-act', disabled: !!reason,
+                  onClick: () => previewInteraction(asset.id) }, label,
+                  action === 'wave' && asset?.available ? h('small', null, '旧版全身预览') : null,
+                  reason ? h('small', null, reason) : null);
+              }),
+              interactionNotice ? h('small', { role: 'status' }, interactionNotice) : null) : null,
           ),
         ),
         h(
           'div',
-          { style: CAPTION, title: heard || undefined },
-          visualStatus ? `准备回答 · 已用 ${preparationElapsed} 秒 · ${preparationStage}${preparationProgress}`
-            : listening ? 'listening' : transcribing ? 'transcribing' : heard || phase,
+          { className: 'aura-status', 'data-aura-status-bar': true,
+            style: { ...CAPTION, textTransform: 'none', opacity: error ? 1 : .85 }, title: error || heard || undefined },
+          error ? h('span', { role: 'alert', style: ERROR }, error)
+            : visualStatus ? h('span', { 'data-aura-preparation': true,
+              role: 'group', 'aria-label': '本次回答音画准备', title: '切换会话、关闭或刷新会取消这次生成' },
+              h('span', { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
+                playbackBuffering ? '本次回答音画正在缓冲' : playbackPending ? '音画就绪等待播放' : `准备回答 · ${preparationStage}`),
+              h('span', { className: 'aura-preparation-detail', 'aria-live': 'off' }, ` · 已用 ${preparationElapsed} 秒${preparationProgress}`))
+            : h('span', { role: 'status' }, caption),
         ),
         h(
           'div',
@@ -3413,9 +3676,8 @@ registerProcessor('aura-capture', AuraCapture);`;
                 )
               : null,
           ),
-          h('div', { className: 'aura-id-mono', style: { whiteSpace: 'normal', lineHeight: 1.5 } },
-            prefs.character && !callActive ? '正面素材为 10 秒循环，接缝可能可见。回复使用当前音色完整音画，生成期间显示真实状态；300 秒无任务才允许返回侧身。' : '简单问题直接答，任务独立执行。插话或挂断不停止任务；普通模式：/aura off。'),
-          error ? h('div', { style: ERROR, role: 'alert' }, error) : null,
+          prefs.character && !callActive ? null : h('div', { className: 'aura-id-mono', style: { whiteSpace: 'normal', lineHeight: 1.5 } },
+            '简单问题直接答，任务独立执行。插话或挂断不停止任务；普通模式：/aura off。'),
         ),
       );
     }

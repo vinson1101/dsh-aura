@@ -1,5 +1,5 @@
 /** Read-only status and explicit, owner-authenticated local enablement. No TTS or inference. */
-export function installVisualSettings(ctx, { instance, enabled, version }) {
+export function installVisualSettings(ctx, { instance, enabled, version, provider = 'latentsync' }) {
   const editable = () => ctx.fiber?.entry !== undefined && ctx.get?.('configEditor') !== undefined;
   const json = (status, value) => new Response(JSON.stringify(value), {
     status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
@@ -14,7 +14,7 @@ export function installVisualSettings(ctx, { instance, enabled, version }) {
       }
       if (request.method === 'GET') {
         const canEdit = editable();
-        return json(200, { version, enabled, editable: canEdit,
+        return json(200, { version, enabled, provider, editable: canEdit,
           ...(!canEdit ? { reason: '当前运行环境不能保存配置' } : {}) });
       }
       if (request.method !== 'POST') return new Response(null, { status: 405, headers: { allow: 'GET, POST' } });

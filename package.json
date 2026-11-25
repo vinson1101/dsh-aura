@@ -1,6 +1,6 @@
 {
   "name": "dsh-aura",
-  "version": "0.35.4-visual.3",
+  "version": "0.35.4-visual.4",
   "description": "A voice companion for DeepSeek Harness: responsive conversation and independently managed tasks, with natural interruption that leaves work running.",
   "license": "MIT",
   "author": "vinson1101",
@@ -51,7 +51,14 @@
     "docs/PANEL.md",
     "docs/PROVIDERS.md",
     "docs/VOICES.md",
-    "icon.svg"
+    "icon.svg",
+    "assets/runtime/short-hair/front-loop-background-matched.mp4",
+    "assets/runtime/short-hair/idle-side-h3-matched.mp4",
+    "assets/runtime/short-hair/idle-lean.mp4",
+    "assets/runtime/short-hair/catalog.json",
+    "assets/previews/短发直播测试/H3-比心/短发半身-双手比心.mp4",
+    "assets/previews/短发直播测试/H3-逗笑对照/H3-被逗开心.mp4",
+    "assets/previews/短发直播测试/首尾衔接预演/挥手统一棚景.mp4"
   ],
   "dsh": {
     "bundle": {

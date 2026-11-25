@@ -1,6 +1,8 @@
 // Unit/fixture tests only: NO LatentSync inference, no real TTS, no paid API.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { mkdtemp, readFile, rm, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -59,7 +61,11 @@ try {
   assert.throws(() => visualConfig({ workDir: '/tmp/space path' }));
   assert.throws(() => visualConfig({ envDir: 'relative/path' }));
   assert.throws(() => visualConfig({ enabled: 'true' }));
-  for (const invalid of [null, [], {}, { ...request, text: '' }, { ...request, text: 'x'.repeat(241) },
+  assert.throws(() => visualConfig({ provider: 'missing' }));
+  for (const remoteUrl of ['http://example.test', 'https://host.test/api', 'https://token@host.test', 'file:///tmp']) {
+    assert.throws(() => visualConfig({ provider: 'quicktalk', remoteUrl }), /configured HTTPS or local HTTP origin/);
+  }
+  for (const invalid of [null, [], {}, { ...request, text: '' }, { ...request, text: 'x'.repeat(3001) },
     { ...request, taskId: '' }, { ...request, sessionId: 3 }, { ...request, voice: 'longanyang' },
     { ...request, voice: '--shell=bad' }, { ...request, voice: 'unknown' }, { ...request, model: 'cosyvoice-v3.5-flash' },
     { ...request, command: '/bin/sh' }, { ...request, source: '/etc/passwd' }, { ...request, text: 'a\u0000b' }]) {
@@ -69,7 +75,108 @@ try {
   const wav = pcmWave(pcm);
   assert.equal(wav.readUInt32LE(24), 16000); assert.equal(wav.readUInt16LE(22), 1);
   assert.deepEqual(wav.subarray(44), pcm); assert.throws(() => pcmWave(Buffer.alloc(3)));
-  assert.throws(() => pcmWave(Buffer.alloc(25 * 32000 + 2)));
+  assert.equal(validateVisualRequest({ ...request, text: '字'.repeat(3000) }).text.length, 3000);
+  for (const seconds of [26, 300]) {
+    assert.equal(pcmWave(Buffer.alloc(seconds * 32000)).readUInt32LE(40), seconds * 32000);
+  }
+  assert.throws(() => pcmWave(Buffer.alloc(300 * 32000 + 2)), /超过 5 分钟/);
+
+  const segmentTexts = ['甲', '乙', '丙', '丁'].map(character => character.repeat(60));
+  const multiPart = { ...request, text: segmentTexts.join('') };
+  const quickConfig = workDir => ({ enabled: true, provider: 'quicktalk', remoteUrl: 'http://127.0.0.1:1', workDir });
+  async function waitForTts(check) {
+    for (let i = 0; i < 60; i++) {
+      if (check()) return;
+      await delay(10);
+    }
+    assert.fail('Expected concurrent TTS fixture did not start');
+  }
+  const begun = [], finished = [], release = new Map();
+  let inflight = 0, maxInflight = 0;
+  const orderedRoot = path.join(root, 'tts-ordered');
+  const ordered = harness({
+    config: quickConfig(orderedRoot),
+    tts: { async stream({ text, model, voice, onChunk, signal }) {
+      const index = segmentTexts.indexOf(text);
+      assert.ok(index >= 0);
+      assert.equal(model, request.model); assert.equal(voice, request.voice);
+      begun.push(index); maxInflight = Math.max(maxInflight, ++inflight);
+      try {
+        onChunk(Buffer.alloc(8000, index * 2 + 1));
+        await new Promise((resolve, reject) => {
+          const abort = () => reject(signal.reason);
+          signal.addEventListener('abort', abort, { once: true });
+          release.set(index, () => { signal.removeEventListener('abort', abort); resolve(); });
+        });
+        onChunk(Buffer.alloc(8000, index * 2 + 2)); finished.push(index);
+      } finally { inflight--; }
+    } },
+  });
+  const orderedJob = ordered.service.create(multiPart, 'owner-a');
+  await waitForTts(() => begun.length === 2); assert.deepEqual(begun, [0, 1]);
+  release.get(1)(); await waitForTts(() => begun.length === 3); assert.equal(maxInflight, 2);
+  release.get(2)(); await waitForTts(() => begun.length === 4);
+  release.get(3)(); release.get(0)();
+  assert.equal((await settled(ordered.service, orderedJob.id)).state, 'ready');
+  assert.deepEqual(finished, [1, 2, 3, 0]);
+  const stitched = await readFile(path.join(orderedRoot, 'jobs', orderedJob.id, 'reply.wav'));
+  assert.deepEqual(stitched.subarray(44), Buffer.concat(Array.from({ length: 8 }, (_, i) => Buffer.alloc(8000, i + 1))));
+
+  for (const action of ['failure', 'overflow', 'cancel']) {
+    let siblingAbort, trigger;
+    const started = [];
+    const fixture = harness({
+      config: quickConfig(path.join(root, 'tts-' + action)),
+      tts: { async stream({ text, onChunk, signal }) {
+        started.push(text);
+        if (text !== segmentTexts[1]) {
+          if (action === 'overflow') onChunk(Buffer.alloc(104));
+          try { await delay(60000, undefined, { signal }); }
+          catch (error) { siblingAbort = signal.aborted; throw error; }
+        } else {
+          await new Promise((resolve, reject) => {
+            const cancelled = () => reject(signal.reason);
+            signal.addEventListener('abort', cancelled, { once: true });
+            trigger = () => { signal.removeEventListener('abort', cancelled); resolve(); };
+          });
+          if (action === 'failure') throw new Error('Timed TTS fixture failure');
+          if (action === 'overflow') onChunk(Buffer.alloc(300 * 32000 - 102));
+        }
+      } },
+    });
+    const allocation = fixture.service.create(multiPart, 'owner-a');
+    await waitForTts(() => Boolean(trigger));
+    if (action === 'cancel') fixture.service.delete(allocation.id, 'owner-a');
+    else trigger();
+    const status = await settled(fixture.service, allocation.id);
+    assert.equal(status.state, action === 'cancel' ? 'cancelled' : 'failed');
+    if (action === 'failure') assert.match(status.error, /Timed TTS fixture failure/);
+    if (action === 'overflow') assert.match(status.error, /超过 5 分钟/);
+    await fixture.service.dispose();
+    assert.equal(siblingAbort, true);
+    assert.deepEqual(started, segmentTexts.slice(0, 2));
+    assert.equal(fixture.calls.render, 0);
+  }
+
+  for (const extraBytes of [0, 2]) {
+    const { service, calls } = harness({
+      tts: { async stream({ onChunk }) {
+        onChunk(Buffer.alloc(26 * 32000));
+        onChunk(Buffer.alloc((300 - 26) * 32000 + extraBytes));
+      } },
+    });
+    const job = service.create(request, 'owner-a');
+    const result = await settled(service, job.id);
+    if (!extraBytes) {
+      assert.equal(result.state, 'ready');
+      assert.equal(result.duration, 300);
+      assert.equal(calls.render, 1);
+    } else {
+      assert.equal(result.state, 'failed');
+      assert.match(result.error, /超过 5 分钟/);
+      assert.equal(calls.render, 0);
+    }
+  }
 
   const disabled = harness({ config: { enabled: false, workDir: path.join(root, 'disabled') } });
   assert.throws(() => disabled.service.create(request, 'owner-a'), { status: 503 });
@@ -229,6 +336,217 @@ try {
   await runVisualProcess('/opt/homebrew/bin/ffmpeg', ['-v', 'error', '-nostdin', '-y', '-i',
     path.join(mux.config.workDir, 'jobs', muxJob.id, 'ready.mp4'), '-map', '0:a:0', '-f', 's16le', decodedAudio]);
   assert.ok((await readFile(decodedAudio)).some(byte => byte !== 0), 'current TTS PCM is audible, not the silent source track');
+
+  // Exercise the actual QuickTalk HTTP transport, local full decode and capability server.
+  const remoteVideo = await readFile(path.join(mux.config.workDir, 'jobs', muxJob.id, 'raw.mp4'));
+  const calls = [], posted = [], remoteDeletes = [];
+  const json = (res, code, value) => res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(value));
+  let unhealthy = true, approved = false, hold = false, queued = true, receipt;
+  let partsEnabled = false, partsPublished = 1, partsFailed = false, truncatePart = false, onPartHeaders, videoBoxes;
+  const serveMedia = (res, bytes, truncated = false) => {
+    // Match the actual Python server's HTTP/1.0 and connection-close behavior.
+    const socket = res.socket;
+    res.detachSocket(socket);
+    const header = Buffer.from(`HTTP/1.0 200 OK\r\nContent-Type: video/mp4\r\nContent-Length: ${bytes.length + (truncated ? 16 : 0)}\r\n\r\n`);
+    socket.end(Buffer.concat([header, bytes]));
+  };
+  const partMetadata = [
+    { index: 0, startSeconds: 0, durationSeconds: 1 }, { index: 1, startSeconds: 1, durationSeconds: 2 },
+    { index: 2, startSeconds: 3, durationSeconds: 1 },
+  ];
+  const approvedSource = '620d5586a80d6507a996eae9913933b103d3154ebbb49ecef90ecf839ea7e97f';
+  const server = createServer(async (req, res) => {
+    calls.push({ method: req.method, url: req.url, auth: req.headers.authorization });
+    if (req.url === '/health') {
+      return json(res, unhealthy ? 503 : 200, { ready: !unhealthy, version: 'quicktalk-v3',
+        engineSha256: hash('fixture-engine'), sourceSha256: approved ? approvedSource : hash('fixture-source'), parts: partsEnabled });
+    }
+    if (req.method === 'POST') {
+      const body = [];
+      for await (const chunk of req) body.push(chunk);
+      const bytes = Buffer.concat(body);
+      assert.equal(req.headers['content-length'], String(bytes.length));
+      posted.push({ type: req.headers['content-type'], wav: bytes });
+      if (hold) { receipt?.(); return; }
+      if (partsEnabled) assert.equal(req.headers['x-quicktalk-parts'], '1');
+      return json(res, 202, { state: 'queued' });
+    }
+    if (req.method === 'DELETE') {
+      remoteDeletes.push(req.url);
+      return json(res, 202, { state: 'cancelled' });
+    }
+    if (req.url.endsWith('/media')) return serveMedia(res, remoteVideo);
+    if (partsEnabled) {
+      const match = /\/parts\/(\d+)$/.exec(req.url);
+      if (match || req.url.endsWith('/init')) {
+        const i = match ? 2 + 2 * Number(match[1]) : 0;
+        const bytes = Buffer.concat(videoBoxes.slice(i, i + 2));
+        if (onPartHeaders && match?.[1] === '2') {
+          res.writeHead(200, { 'content-type': 'video/mp4', 'content-length': bytes.length });
+          res.write(bytes.subarray(0, 4096)); // Keep a body in flight after the headers.
+          onPartHeaders(once(res, 'close'));
+          return;
+        }
+        return serveMedia(res, bytes, truncatePart && match?.[1] === '2');
+      }
+      return json(res, 200, { state: partsFailed ? 'failed' : partsPublished === 3 ? 'ready' : 'running',
+        initReady: true, parts: partMetadata.slice(0, partsPublished),
+        metrics: { audioFeatureSeconds: .1, firstPartSeconds: .2, renderFps: 40, encodingSeconds: .1, muxSeconds: .05, debug: 'private' } });
+    }
+    const state = queued ? 'queued' : 'ready';
+    queued = false;
+    return json(res, 200, { state });
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const originalFetch = globalThis.fetch;
+  try {
+    const remoteUrl = `http://127.0.0.1:${server.address().port}`;
+    globalThis.fetch = (url, ...args) => {
+      assert.ok(!String(url).startsWith(remoteUrl), 'QuickTalk must bypass the affected Undici transport');
+      return originalFetch(url, ...args);
+    };
+    const workDir = path.join(root, 'quick');
+    const quickHarness = workDir => harness({ config: { enabled: true, provider: 'quicktalk', remoteUrl, workDir },
+      preflight: undefined, render: undefined, verify: undefined, readQuickTalkToken: async () => 'fixture-only-token' });
+    const offline = quickHarness(workDir + '-offline');
+    const unavailable = offline.service.create(request, 'owner-a');
+    assert.equal((await settled(offline.service, unavailable.id)).state, 'failed');
+    assert.equal(offline.calls.tts, 0, 'health failure precedes TTS');
+    unhealthy = false;
+    const wrong = quickHarness(workDir + '-wrong-source');
+    const wrongSource = wrong.service.create(request, 'owner-a');
+    assert.match((await settled(wrong.service, wrongSource.id)).error, /unapproved Wan source/);
+    assert.equal(wrong.calls.tts, 0);
+    approved = true;
+    const quick = quickHarness(workDir);
+    const quickJob = quick.service.create({ ...request, taskId: 'quick-available' }, 'owner-a');
+    const quickReady = await settled(quick.service, quickJob.id);
+    assert.equal(quickReady.state, 'ready', quickReady.error);
+    assert.equal(quickReady.provider, 'quicktalk');
+    assert.ok(quick.events.some(value => value.stage === 'queued'));
+    assert.ok(calls.every(call => call.auth === 'Bearer fixture-only-token'));
+    assert.ok(!JSON.stringify(quick.events).includes('fixture-only-token'));
+    assert.deepEqual(posted, [{ type: 'audio/wav', wav }]);
+    assert.deepEqual(remoteDeletes, ['/v1/jobs/' + quickJob.id]);
+    const current = new Request('http://localhost' + quickReady.mediaUrl, { headers: { range: 'bytes=0-7' } });
+    const partial = await quick.service.media(current);
+    assert.equal(partial.status, 206);
+    assert.equal(Buffer.from(await partial.arrayBuffer()).subarray(4).toString(), 'ftyp');
+    const decoded = path.join(root, 'quick-decoded.pcm');
+    await runVisualProcess('/opt/homebrew/bin/ffmpeg', ['-v', 'error', '-nostdin', '-i',
+      path.join(workDir, 'jobs', quickJob.id, 'ready.mp4'), '-map', '0:a:0', '-f', 's16le', decoded]);
+    assert.deepEqual(await readFile(decoded), await readFile(decodedAudio), 'remote silent track is replaced by the current speech');
+
+    hold = true;
+    const received = new Promise(resolve => { receipt = resolve; });
+    const nextJob = quick.service.create({ ...request, taskId: 'quick-cancel-during-upload' }, 'owner-a');
+    await received;
+    quick.seat.release();
+    await quick.service.dispose();
+    assert.equal(quick.service.get(nextJob.id, 'owner-a').state, 'cancelled');
+    assert.equal(remoteDeletes.at(-1), '/v1/jobs/' + nextJob.id, 'DELETE cleans up even without a POST receipt');
+    assert.equal((await quick.service.media(current)).status, 404);
+
+    hold = false; partsEnabled = true;
+    const fixture = path.join(root, 'quick-fragmented.mp4');
+    await runVisualProcess('/opt/homebrew/bin/ffmpeg', ['-v', 'error', '-nostdin', '-f', 'lavfi', '-i', 'testsrc2=s=384x384:r=25:d=4',
+      '-an', '-c:v', 'libx264', '-profile:v', 'high', '-level:v', '3.1', '-bf', '0', '-g', '1000', '-sc_threshold', '0',
+      '-crf', '15', '-force_key_frames', '1,3', '-movflags', '+empty_moov+default_base_moof+frag_keyframe+skip_trailer', fixture]);
+    const bytes = await readFile(fixture);
+    videoBoxes = [];
+    for (let i = 0; i < bytes.length;) {
+      const length = bytes.readUInt32BE(i);
+      assert.ok(length > 8 && i + length <= bytes.length);
+      videoBoxes.push(bytes.subarray(i, i + length)); i += length;
+    }
+    assert.deepEqual(videoBoxes.map(box => box.toString('ascii', 4, 8)), ['ftyp', 'moov', 'moof', 'mdat', 'moof', 'mdat', 'moof', 'mdat']);
+    assert.ok(videoBoxes[3].length > 64 * 1024, 'a real segment exceeds the parser backpressure threshold');
+    const streamingHarness = suffix => harness({ config: { enabled: true, provider: 'quicktalk', remoteUrl, workDir: workDir + suffix },
+      preflight: undefined, render: undefined, verify: undefined, readQuickTalkToken: async () => 'fixture-only-token',
+      tts: { async stream({ onChunk }) { for (let i = 0; i < 8; i++) onChunk(pcm); } },
+      run(command, args, options) {
+        if (!options.input) return runVisualProcess(command, args, options);
+        return runVisualProcess(command, args, { ...options, async *input(signal) {
+          for await (const chunk of options.input(signal)) { await delay(15, undefined, { signal }); yield chunk; }
+        } });
+      },
+    });
+    async function getEarlyStream(service, job) {
+      for (let i = 0; i < 75; i++) {
+        const status = service.get(job.id, 'owner-a');
+        assert.equal(status.state, 'preparing', status.error);
+        if (status.streamUrl) return status;
+        await delay(20);
+      }
+      assert.fail('First AV fragment must arrive before the remote final segments are available; recent requests: '
+        + calls.slice(-8).map(call => call.method + ' ' + call.url).join(', '));
+    }
+    const progressive = streamingHarness('-streaming');
+    const streamJob = progressive.service.create(request, 'owner-a');
+    const early = await getEarlyStream(progressive.service, streamJob);
+    assert.match(early.streamMime, /avc1\.64001F, mp4a\.40\.2/);
+    assert.equal(early.mediaUrl, undefined);
+    const progressiveRequest = () => new Request('http://localhost' + early.streamUrl);
+    progressive.deny(403);
+    assert.equal((await progressive.service.media(progressiveRequest())).status, 403);
+    progressive.deny(undefined);
+    const streamResponse = await progressive.service.media(progressiveRequest());
+    assert.equal(streamResponse.status, 200);
+    assert.equal(streamResponse.headers.get('content-length'), null);
+    const reader = streamResponse.body.getReader();
+    const firstBytes = await reader.read();
+    assert.equal(Buffer.from(firstBytes.value).toString('ascii', 4, 8), 'ftyp');
+    partsPublished = 3;
+    const receivedChunks = [Buffer.from(firstBytes.value)];
+    for (;;) {
+      const entry = await reader.read();
+      if (entry.done) break;
+      receivedChunks.push(Buffer.from(entry.value));
+    }
+    const streamReady = await settled(progressive.service, streamJob.id);
+    assert.equal(streamReady.state, 'ready', streamReady.error);
+    assert.deepEqual(progressive.events.at(-1).remoteMetrics,
+      { audioFeatureSeconds: .1, firstPartSeconds: .2, renderFps: 40, encodingSeconds: .1, muxSeconds: .05 });
+    assert.ok(streamReady.mediaUrl);
+    assert.equal((await progressive.service.media(new Request('http://localhost' + streamReady.mediaUrl, { method: 'HEAD' }))).status, 200);
+    assert.deepEqual(Buffer.concat(receivedChunks), await readFile(path.join(workDir + '-streaming', 'jobs', streamJob.id, 'stream.mp4')));
+
+    for (const action of ['failed-status', 'truncated-part', 'cancel']) {
+      partsPublished = 1; partsFailed = false; truncatePart = false; onPartHeaders = undefined;
+      const broken = streamingHarness('-' + action);
+      const brokenJob = broken.service.create(request, 'owner-a');
+      const pending = await getEarlyStream(broken.service, brokenJob);
+      const req = new Request('http://localhost' + pending.streamUrl);
+      const outgoing = await broken.service.media(req);
+      const consume = outgoing.arrayBuffer();
+      const rejected = assert.rejects(consume);
+      let bodyClosed;
+      if (action === 'cancel') {
+        let bodyStarted;
+        const transferStarted = new Promise(resolve => { bodyStarted = resolve; });
+        onPartHeaders = closed => { bodyClosed = closed; bodyStarted(); };
+        partsPublished = 3;
+        await transferStarted;
+        await delay(30);
+        broken.seat.release();
+      }
+      else if (action === 'failed-status') partsFailed = true;
+      else { truncatePart = true; partsPublished = 3; }
+      await rejected;
+      const terminal = await settled(broken.service, brokenJob.id);
+      assert.equal(terminal.state, action === 'cancel' ? 'cancelled' : 'failed');
+      if (action === 'truncated-part') assert.match(terminal.error, /transfer was interrupted/);
+      assert.equal((await broken.service.media(req)).status, 404);
+      await broken.service.dispose();
+      if (bodyClosed) await bodyClosed;
+      assert.equal(remoteDeletes.at(-1), '/v1/jobs/' + brokenJob.id);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
   const corrupt = harness({ verify: undefined });
   const corruptJob = corrupt.service.create(request, 'owner-a');
   assert.equal((await settled(corrupt.service, corruptJob.id)).state, 'failed', 'invalid fixture bytes cannot publish ready under real ffprobe/decode');

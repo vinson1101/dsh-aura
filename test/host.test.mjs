@@ -55,8 +55,14 @@ try {
     assert.equal(Buffer.from(await artwork.arrayBuffer()).toString('ascii', 8, 12), 'WEBP');
   }
   const assets = [
+    ['heart.mp4', 'assets/previews/短发直播测试/H3-比心/短发半身-双手比心.mp4', 'video/mp4'],
+    ['smile.mp4', 'assets/previews/短发直播测试/H3-逗笑对照/H3-被逗开心.mp4', 'video/mp4'],
+    ['wave.mp4', 'assets/previews/短发直播测试/首尾衔接预演/挥手统一棚景.mp4', 'video/mp4'],
     ['short-hair.png', 'assets/previews/短发直播测试/无声倾听/短发正面直视-参考帧.png', 'image/png'],
-    ['front.mp4', 'assets/previews/短发直播测试/无声倾听/短发正面直视-十秒无声倾听.mp4', 'video/mp4'],
+    ['front.mp4', 'assets/runtime/short-hair/front-loop-background-matched.mp4', 'video/mp4'],
+    ['catalog.json', 'assets/runtime/short-hair/catalog.json', 'application/json'],
+    ['idle-side.mp4', 'assets/runtime/short-hair/idle-side-h3-matched.mp4', 'video/mp4'],
+    ['idle-lean.mp4', 'assets/runtime/short-hair/idle-lean.mp4', 'video/mp4'],
     ['side.png', 'assets/runtime/short-hair/side.png', 'image/png'],
     ['turn.mp4', 'assets/runtime/short-hair/turn.mp4', 'video/mp4'],
     ['listen.mp4', 'assets/runtime/short-hair/listen.mp4', 'video/mp4'],
@@ -109,6 +115,13 @@ try {
     if (contentType === 'image/png') {
       assert.equal(expected.readUInt32BE(16), 1113);
       assert.equal(expected.readUInt32BE(20), 1414);
+    } else if (contentType === 'application/json') {
+      const catalog = JSON.parse(expected);
+      assert.equal(catalog.schemaVersion, 1);
+      const tagged = JSON.parse(await readFile(new URL('../docs/参考资料/盛唐-微表情与肢体动作库/Aura素材标签.json', import.meta.url)));
+      assert.deepEqual(catalog.assets, tagged.assets, 'runtime selection preserves the reviewed source tags');
+      assert.ok(catalog.assets.some(asset => asset.id === 'h3-lean' && asset.runtime.roles.includes('idle-interaction')));
+      assert.deepEqual(catalog.assets.find(asset => asset.id === 'h3-heart').runtime.roles, ['manual-interaction']);
     } else assert.equal(expected.toString('ascii', 4, 8), 'ftyp');
     for (const headers of [{}, { range: 'bytes=3-20' }, { range: 'bytes=not-valid' }]) {
       const head = await fetch(url, { method: 'HEAD', headers });
@@ -187,11 +200,13 @@ try {
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   assert.equal((await visualCall('POST', '', visualBody)).status, 503, 'opt-in disabled refuses a valid reply without TTS/inference');
+  assert.equal((await visualCall('POST', '', { ...visualBody, text: '字'.repeat(3000) })).status, 503,
+    'maximum-length visual text reaches the disabled service without accessing a provider');
   for (const body of [{ ...visualBody, voice: 'longanyang' }, { ...visualBody, voice: undefined },
-    { ...visualBody, source: '/etc/passwd' }, { ...visualBody, text: '字'.repeat(241) }]) {
+    { ...visualBody, source: '/etc/passwd' }, { ...visualBody, text: '字'.repeat(3001) }]) {
     assert.equal((await visualCall('POST', '', body)).status, 400, 'strict voice/text/schema validation runs before any provider');
   }
-  for (const [body, type] of [['x'.repeat(8193), 'application/json'], ['{', 'application/json'], ['{}', 'text/plain']]) {
+  for (const [body, type] of [[' '.repeat(24 * 1024) + '{}', 'application/json'], ['{', 'application/json'], ['{}', 'text/plain']]) {
     const response = await fetch(origin + '/aura/visual', { method: 'POST',
       headers: { 'x-aura-instance': token, 'content-type': type }, body });
     assert.equal(response.status, 400, 'small JSON-only body boundary');
@@ -205,7 +220,7 @@ try {
   assert.equal((await visualCall('DELETE', '?id=' + unknown)).status, 404);
   const closed = once(owner, 'close'); owner.close(); await closed;
   for (const path of ['/aura/tts', '/aura/asr', '/aura/visual']) assert.equal(await request(path, token), 409, 'released tokens cannot consume provider resources');
-  console.log('host.test.mjs: ok (7 allowlisted authenticated assets: HEAD/Range/416/path safety; ASR/TTS/visual ownership + browser admission, opt-in disabled, UUID/method gates)');
+  console.log('host.test.mjs: ok (13 allowlisted authenticated assets: HEAD/Range/416/path safety; ASR/TTS/visual ownership + browser admission, opt-in disabled, UUID/method gates)');
 } finally {
   while (effects.length) effects.pop()();
   server.close(); await once(server, 'close');

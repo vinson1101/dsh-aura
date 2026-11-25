@@ -197,7 +197,7 @@ await test('actual pending task, preparation, and AV playback lock config saves 
   assert.equal(f.toggle().disabled, true, 'native child remains pending after foreground run');
   await f.summary({ taskId: 'native-child' }); await f.wait(160);
   assert.equal(f.toggle().disabled, true, 'preparing and loading reply media');
-  const video = f.container.querySelector('video');
+  const video = f.container.querySelector('[data-aura-reply-player]');
   await f.run(() => video.oncanplaythrough()); await f.run(() => video.onplaying());
   assert.equal(f.container.querySelector('[data-aura-state]').dataset.auraState, 'speaking');
   assert.equal(f.toggle().disabled, true, 'actual AV clock is playing');

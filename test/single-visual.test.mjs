@@ -8,7 +8,7 @@ import { JSDOM } from 'jsdom';
 import { withInstanceSocket, controls } from './instance-socket.mjs';
 const require = createRequire(import.meta.url);
 const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8');
-const a = source.indexOf('function createVisualPreparation('), b = source.indexOf('/** Single-task v3:', a);
+const a = source.indexOf('function createVisualPreparation('), b = source.indexOf('function SingleCharacter(', a);
 assert.ok(a > 0 && b > a);
 const createVisualPreparation = new Function(`${source.slice(a, b)}; return createVisualPreparation;`)();
 const reply = (value, ok = true) => ({ ok, json: async () => value });
@@ -40,6 +40,21 @@ await test('visual preparation posts exact current female voice/task, polls auth
   assert.equal(ready.mediaUrl, '/aura/visual/media?id=job&ticket=cap');
   assert.equal(calls[1].init.headers['x-aura-instance'], 'instance-secret');
   f.value.cancel(); assert.equal(calls.at(-1).init.method, 'DELETE');
+});
+
+await test('supported stream is playable before whole render; unsupported waits for final media', async () => {
+  for (const supported of [true, false]) {
+    let count = 0;
+    const request = async () => reply(++count === 1
+      ? { id: 'stream-job', state: 'preparing', streamUrl: '/stream', streamMime: 'video/mp4' }
+      : { id: 'stream-job', state: 'ready', mediaUrl: '/full', streamUrl: '/stream', streamMime: 'video/mp4' });
+    const controller = createVisualPreparation({ access: { token: 'seat', active: () => true }, request,
+      clock: globalThis, onStatus() {}, supportsStream: () => supported });
+    const value = await controller.prepare(body);
+    assert.equal(value.streamUrl, supported ? '/stream' : undefined);
+    assert.equal(count, supported ? 1 : 2);
+    controller.cancel();
+  }
 });
 
 await test('cancel clears polling timer and DELETEs once; a late POST receipt cannot orphan a job', async () => {
@@ -141,7 +156,7 @@ async function mountPane(options = {}) {
   if (options.manualPoll) {
     const schedule = window.setTimeout.bind(window), clear = window.clearTimeout.bind(window);
     window.setTimeout = (fn, ms, ...args) => {
-      if (ms !== 1000) return schedule(fn, ms, ...args);
+      if (ms !== 250) return schedule(fn, ms, ...args);
       const id = --pollId; polls.set(id, () => fn(...args)); return id;
     };
     window.clearTimeout = id => { if (!polls.delete(id)) clear(id); };
@@ -150,6 +165,7 @@ async function mountPane(options = {}) {
   const fetch = async (url, init = {}) => {
     calls.push({ url, init });
     if (url === '/aura/version') return reply({ origin: 'http://aura.test' });
+    if (url === '/aura/character/catalog.json') return reply(options.catalog || { schemaVersion: 1, assets: [] });
     if (String(url).startsWith('/aura/visual')) return options.request ? options.request(url, init) : reply({ id: 'current-job', state: 'ready', mediaUrl: '/aura/visual/media?id=current-job&ticket=cap' });
     if (url === '/aura/tts') throw new Error('single character must NEVER use separate PCM');
     return reply({});
@@ -219,8 +235,48 @@ const prepareReply = async f => {
   await f.setRunning(false); await f.wait(160);
 };
 const preparationCard = f => f.container.querySelector('[data-aura-preparation]');
+
+await test('interaction menu previews the tagged clip from the unopened portrait and explains missing or blocked actions', async t => {
+  const manual = (id, manualAction, options = {}) => ({ id, runtime: {
+    enabled: true, roles: ['manual-interaction'], manualAction, audio: 'silent',
+    src: `/aura/character/${id}.mp4`, ...options,
+  } });
+  const f = await mountPane({ catalog: { schemaVersion: 1, assets: [
+    manual('h3-heart', 'heart'), manual('h3-wave', 'wave', { enabled: false, disabledReason: '挥手画面需要重新构图' }),
+  ] } });
+  t.after(f.unmount);
+  const toggle = f.container.querySelector('.aura-interactions');
+  assert.equal(toggle.previousElementSibling.getAttribute('aria-label'), 'Start call');
+  await f.run(() => toggle.click());
+  const menu = f.container.querySelector('[aria-label="动作预览"]');
+  const menuStyle = menu.ownerDocument.defaultView.getComputedStyle(menu);
+  assert.equal(menuStyle.backgroundColor, 'rgb(37, 35, 42)', 'portrait menu keeps its own dark surface under the app theme');
+  assert.equal(menuStyle.color, 'rgb(245, 244, 246)');
+  const [side, lean, heart, wave, smile] = menu.querySelectorAll('button');
+  assert.deepEqual([...menu.querySelectorAll('button')].map(button => button.firstChild.textContent), ['转侧身', '探镜头', '比爱心', '招手', '微笑']);
+  assert.ok(side.disabled && lean.disabled && smile.disabled); assert.match(side.textContent, /暂无可用素材/);
+  assert.equal(heart.disabled, false); assert.equal(wave.disabled, true); assert.match(wave.textContent, /挥手画面需要重新构图/);
+  await f.run(() => heart.click());
+  assert.equal(f.container.querySelector('[aria-label="动作预览"]'), null);
+  const player = f.container.querySelector('[data-aura-idle-player]');
+  assert.equal(player.getAttribute('src'), '/aura/character/h3-heart.mp4');
+  assert.equal(player.muted, true);
+  assert.match(f.container.querySelector('[data-aura-status-bar]').textContent, /待机.*麦克风关闭/);
+  assert.ok(f.container.querySelector('[aria-label="Start listening"]'));
+  assert.equal(f.post().length, 0);
+  await f.run(() => { player.onloadeddata(); player.onplaying(); player.onended(); });
+  assert.equal(f.container.querySelector('video').getAttribute('src'), '/aura/character/front.mp4');
+
+  await prepareReply(f);
+  const replyVideo = f.container.querySelector('[data-aura-reply-player]');
+  await f.run(() => { replyVideo.oncanplaythrough(); replyVideo.onplaying(); });
+  await f.run(() => toggle.click());
+  const blocked = f.container.querySelector('[aria-label="动作预览"]');
+  assert.ok([...blocked.querySelectorAll('button')].every(button => button.disabled));
+  assert.match(blocked.textContent, /回答正在播放/);
+});
 const speakEnd = async f => {
-  const video = f.container.querySelector('video');
+  const video = f.container.querySelector('[data-aura-reply-player]');
   await f.run(() => video.oncanplaythrough()); await f.run(() => video.onplaying()); await f.run(() => video.onended());
 };
 
@@ -239,7 +295,7 @@ await test('full pane single-task completion renders once, uses native task id/f
   assert.equal(f.post().length, 1);
   const payload = JSON.parse(f.post()[0].init.body);
   assert.equal(payload.taskId, 'native-child'); assert.equal(payload.voice, 'longwan_v3'); assert.equal(payload.model, 'cosyvoice-v3-flash');
-  const video = f.container.querySelector('video');
+  const video = f.container.querySelector('[data-aura-reply-player]');
   assert.equal(video.getAttribute('src'), '/aura/visual/media?id=current-job&ticket=cap');
   assert.notEqual(f.container.querySelector('[data-aura-state]').dataset.auraState, 'speaking');
   await f.run(() => video.oncanplaythrough());
@@ -288,7 +344,7 @@ await test('no-stream final snapshot fallback reads actual current reply once, n
   await speakEnd(f);
 });
 
-await test('production Pane shows prominent preparation card across authentic Chinese stages, real elapsed and steps without live tick spam', async t => {
+await test('production Pane shows progress in bottom caption across authentic stages, elapsed and steps', async t => {
   const stages = [
     ['preflight', '检查本地环境'], ['tts', '生成当前女声'], ['loading-models', '加载口型模型'],
     ['rendering', '生成口型音画'], ['muxing', '合并本次音画'], ['validating', '校验完整音画'],
@@ -301,55 +357,53 @@ await test('production Pane shows prominent preparation card across authentic Ch
       ...(stage === 'rendering' ? { progress: { step: 3, steps: 20 } } : {}) });
   } });
   t.after(f.unmount); await prepareReply(f);
-  const card = preparationCard(f), view = card.ownerDocument.defaultView;
-  assert.ok(card.closest('[role="group"][aria-label^="Aura "]'), 'card is in the main call/character stage, not the footer');
-  assert.equal(view.getComputedStyle(card).display, 'grid');
-  assert.notEqual(view.getComputedStyle(card).visibility, 'hidden');
-  assert.equal(card.hidden, false);
-  for (const message of ['文字已回复，音画仍在生成', '当前为待机画面，完成后自动播放本次回答',
-    '请留在本会话；切换、关闭或刷新会取消本次生成', '可能耗时数分钟或更久']) assert.ok(card.textContent.includes(message));
-  assert.match(card.textContent, /非实时/);
+  const card = preparationCard(f);
+  const statusBar = f.container.querySelector('[data-aura-status-bar]');
+  const stage = f.container.querySelector('[role="group"][aria-label^="Aura "]');
+  assert.ok(statusBar.contains(card));
+  assert.equal(stage.contains(card), false, 'progress is in the bottom caption and never overlays the face');
+  assert.match(card.title, /切换会话.*取消/);
   const live = card.querySelector('[aria-live="polite"]'), elapsed = card.querySelector('[aria-live="off"]');
   assert.equal(card.hasAttribute('aria-live'), false);
-  assert.equal(live.textContent, '检查本地环境'); assert.equal(elapsed.textContent, '已用 0 秒');
+  assert.equal(live.textContent, '准备回答 · 检查本地环境'); assert.equal(elapsed.textContent, ' · 已用 0 秒');
   await f.wait(1100);
   assert.match(elapsed.textContent, /已用 [1-9]\d* 秒/);
-  assert.equal(live.textContent, '检查本地环境', 'elapsed ticks are outside the small live region');
+  assert.equal(live.textContent, '准备回答 · 检查本地环境', 'elapsed ticks are outside the small live region');
   assert.equal(live.contains(elapsed), false);
   for (index = 1; index < stages.length; index++) {
     await f.poll();
     assert.equal(preparationCard(f), card, 'same visible card persists across stages');
-    assert.equal(live.textContent, stages[index][1]);
-    assert.equal(elapsed.textContent, `已用 ${index * 17} 秒${index === 3 ? ' · 3/20' : ''}`);
+    assert.equal(live.textContent, '准备回答 · ' + stages[index][1]);
+    assert.equal(elapsed.textContent, ` · 已用 ${index * 17} 秒${index === 3 ? ' · 3/20' : ''}`);
     assert.doesNotMatch(card.textContent, /%|ETA|预计/);
-    assert.equal(f.container.querySelector('video').getAttribute('src'), '/aura/character/front.mp4');
+    assert.equal(f.container.querySelector('video').getAttribute('src'), null);
     assert.notEqual(f.container.querySelector('[data-aura-state]').dataset.auraState, 'speaking');
   }
   assert.ok(f.container.querySelector('[aria-label="Silence"]'));
   assert.ok(f.container.querySelector('[aria-label="Aura profile"]'));
   await f.run(() => f.container.querySelector('[aria-label="Silence"]').click());
   assert.equal(preparationCard(f), null);
+  assert.match(f.container.querySelector('[data-aura-status-bar]').textContent, /已停止本次回答音画/);
   assert.equal(f.calls.filter(c => c.init.method === 'DELETE').length, 1);
 });
 
 await test('ready AV keeps preparation card until actual playing, preserves play gesture/settings, and clears after playback or buffering resumes', async t => {
   const f = await mountPane({ playError: Object.assign(new Error('gesture required'), { name: 'NotAllowedError' }) });
   t.after(f.unmount); await prepareReply(f);
-  const card = preparationCard(f), video = f.container.querySelector('video');
+  const card = preparationCard(f), video = f.container.querySelector('[data-aura-reply-player]');
   assert.ok(card); assert.match(card.textContent, /音画就绪等待播放/);
-  assert.match(card.textContent, /等待播放器就绪/); assert.doesNotMatch(card.textContent, /已播放|正在播放/);
+  assert.doesNotMatch(card.textContent, /已播放|正在播放/);
   assert.notEqual(f.container.querySelector('[data-aura-state]').dataset.auraState, 'speaking');
   await f.run(() => video.oncanplaythrough());
   const play = f.container.querySelector('[data-aura-play]'); assert.ok(play, 'real autoplay-denied handler exposes gesture');
-  const view = card.ownerDocument.defaultView;
-  assert.ok(Number(view.getComputedStyle(play).zIndex) > Number(view.getComputedStyle(card).zIndex));
+  assert.equal(card.contains(play), false);
   const plays = f.mediaCalls.filter(c => c.kind === 'play').length;
   await f.run(() => play.click());
   assert.equal(f.mediaCalls.filter(c => c.kind === 'play').length, plays + 1);
   assert.equal(preparationCard(f), card, 'play request is not evidence of playing');
   await f.run(() => f.container.querySelector('[aria-label="Aura profile"]').click());
   const settings = f.container.querySelector('[aria-label="Aura settings"]'); assert.ok(settings);
-  assert.ok(Number(view.getComputedStyle(settings).zIndex) > Number(view.getComputedStyle(card).zIndex));
+  assert.equal(card.contains(settings), false);
   await f.run(() => f.container.querySelector('[aria-label="Close Aura profile"]').click());
   await f.run(() => video.onplaying());
   assert.equal(preparationCard(f), null); assert.equal(f.container.querySelector('[data-aura-state]').dataset.auraState, 'speaking');
@@ -384,9 +438,9 @@ await test('honest elapsed stage/progress during long render; Silence aborts pol
   t.after(f.unmount); await f.send(); await f.setRunning(true);
   await f.emit('assistant/live-chunk', { turn: 1, chunk: { type: 'text-delta', index: 0, text: '本轮回复。' } });
   await final(f, '本轮回复。'); await f.setRunning(false); await f.wait(160);
-  assert.match(f.container.textContent, /已用 17 秒 · 生成口型音画 · 3\/20/);
+  assert.match(f.container.textContent, /生成口型音画 · 已用 17 秒 · 3\/20/);
   assert.ok(preparationCard(f));
-  assert.equal(f.container.querySelector('video').getAttribute('src'), '/aura/character/front.mp4');
+  assert.equal(f.container.querySelector('video').getAttribute('src'), null);
   assert.notEqual(f.container.querySelector('[data-aura-state]').dataset.auraState, 'speaking');
   await f.wait(1100);
   const reading = f.calls.find(c => c.url.includes('?id=preparing-job') && !c.init.method);
@@ -394,10 +448,11 @@ await test('honest elapsed stage/progress during long render; Silence aborts pol
   await f.run(() => f.container.querySelector('[aria-label="Silence"]').click());
   assert.equal(reading.init.signal.aborted, true);
   assert.equal(preparationCard(f), null);
+  assert.match(f.container.querySelector('[data-aura-status-bar]').textContent, /已停止本次回答音画/);
   assert.equal(f.calls.filter(c => c.init.method === 'DELETE').length, 1);
   stale.resolve(reply({ id: 'preparing-job', state: 'ready', mediaUrl: '/stale-answer' })); await f.wait(50);
   await summary(f, { turn: 2 }); await f.wait(200);
-  assert.equal(f.post().length, 1); assert.equal(f.container.querySelector('video').getAttribute('src'), '/aura/character/front.mp4');
+  assert.equal(f.post().length, 1); assert.equal(f.container.querySelector('video').getAttribute('src'), null);
   assert.ok(!f.calls.some(c => c.url === '/aura/tts'));
 });
 
@@ -460,7 +515,8 @@ await test('lease invalidation during AV unloads video, revokes capability and i
   const f = await mountPane(); t.after(f.unmount); await f.send(); await f.setRunning(true);
   await f.emit('assistant/live-chunk', { turn: 1, chunk: { type: 'text-delta', index: 0, text: '即将中断的回答。' } });
   await final(f, '即将中断的回答。'); await f.setRunning(false); await f.wait(160);
-  const video = f.container.querySelector('video'); await f.run(() => video.onplaying());
+  const video = f.container.querySelector('[data-aura-reply-player]');
+  await f.run(() => video.oncanplaythrough()); await f.run(() => video.onplaying());
   const stale = video.onplaying;
   await f.run(() => f.socket.onclose({}));
   assert.equal(video.getAttribute('src'), null); assert.equal(f.container.querySelector('video'), null);
@@ -521,7 +577,7 @@ await test('single-character local preflight gives actionable Chinese settings h
       assert.ok(checkbox);
       const note = checkbox.parentElement.textContent;
       assert.match(note, /单句数字人需选择女声 \+ CosyVoice 3\.0 Flash（非 3\.5）/);
-      assert.match(note, /不自动换声/); assert.match(note, /54 分钟（非实时）/); assert.match(note, /10 秒正面循环有接缝/);
+      assert.match(note, /不自动换声/); assert.match(note, /54 分钟（非实时）/); assert.match(note, /关麦后进入低频互动/);
       await f.run(() => f.container.querySelector('[aria-label="Close Aura profile"]').click());
       await f.send(); assert.equal(f.prompts.length, 1, 'invalid visual preference never prevents task submission');
       await f.setRunning(true); await final(f, '任务已经完成。'); await f.setRunning(false); await f.wait(180);
@@ -531,7 +587,7 @@ await test('single-character local preflight gives actionable Chinese settings h
       assert.match(hint, /单句数字人需要女声音色和 CosyVoice 3\.0 Flash/);
       assert.match(hint, /请打开 Aura 设置/); assert.match(hint, /不会自动换声/); assert.match(hint, /任务执行不受影响/);
       assert.equal(f.preferences().voice, prefs.voice); assert.equal(f.preferences().model, prefs.model);
-      assert.equal(f.container.querySelector('video').getAttribute('src'), '/aura/character/front.mp4');
+      assert.equal(f.container.querySelector('video').getAttribute('src'), null);
     } finally { await f.unmount(); }
   }
 });

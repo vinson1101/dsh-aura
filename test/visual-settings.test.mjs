@@ -29,7 +29,7 @@ for (const status of [401, 403]) {
   assert.equal((await call('POST', { enabled: true })).status, status);
 }
 denied = undefined;
-assert.deepEqual(await (await call()).json(), { enabled: false, editable: true, version: 'test' });
+assert.deepEqual(await (await call()).json(), { enabled: false, provider: 'latentsync', editable: true, version: 'test' });
 assert.equal(writes, 0, 'read-only status never persists or generates');
 for (const value of [{}, [], null, { enabled: 1 }, { enabled: true, path: '/tmp' }, 'bad', 'x'.repeat(257)]) {
   assert.equal((await call('POST', value === null ? 'null' : value)).status, 400);

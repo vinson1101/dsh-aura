@@ -1,24 +1,33 @@
-/** Opt-in, single-turn local Wan + verified Mac LatentSync preparation.
+/** Opt-in, single-turn visual preparation with LatentSync or QuickTalk.
  * Nothing invokes this path from ordinary /aura/tts. No shell commands, model
- * downloads, daemon, or request-selected paths. A ready result is fully muxed
- * and decoded before publishing its capability URL.
+ * downloads, daemon, or request-selected paths. A ready download is fully
+ * decoded. QuickTalk can also publish an owner-scoped progressive stream.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
 import { appendFile, copyFile, mkdir, open, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import { request as requestHttp } from 'node:http';
+import { request as requestHttps } from 'node:https';
 import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { textSegments } from './tts.js';
 
 const SOURCE = fileURLToPath(new URL('./assets/previews/短发直播测试/Wan讲话-背景单独校正/Wan讲话底片-定妆棚景-10秒无声.mp4', import.meta.url));
+const SOURCE_SHA256 = '620d5586a80d6507a996eae9913933b103d3154ebbb49ecef90ecf839ea7e97f';
 const WRAPPER = fileURLToPath(new URL('./tools/latentsync-response.py', import.meta.url));
 const ADAPTER = fileURLToPath(import.meta.url);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FEMALE_VOICES = ['longyan_v3', 'longxiaochun_v3', 'longxiaoxia_v3', 'longwan_v3', 'longyue_v3',
   'longyuan_v3', 'longmiao_v3', 'longhua_v3', 'longanran_v3', 'longyumi_v3', 'loongbella_v3'];
-const MAX_PCM = 25 * 16000 * 2;
+const MAX_PCM = 300 * 16000 * 2;
+const MAX_TEXT = 3000;
+const MAX_MEDIA = 128 * 1024 * 1024;
+const STREAM_MIME = 'video/mp4; codecs="avc1.64001F, mp4a.40.2"';
+const QUICKTALK_METRICS = ['audioFeatureSeconds', 'firstPartSeconds', 'renderFps', 'encodingSeconds', 'muxSeconds'];
 const MAX_JOBS = 16;
 const TTL = 30 * 60 * 1000;
 const OWNERSHIP_CANCEL_REASONS = new Set(['socket-close', 'socket-error', 'heartbeat-timeout', 'plugin-dispose']);
@@ -35,8 +44,23 @@ export function visualConfig(input = {}, env = process.env) {
     ffmpeg: '/opt/homebrew/bin/ffmpeg', ffprobe: '/opt/homebrew/bin/ffprobe',
     workDir: '/Users/vinson/Projects/local/aura-visual-response',
   };
-  const result = { enabled: input.enabled === true || (input.enabled === undefined && env.AURA_LATENTSYNC_ENABLED === '1') };
+  const provider = input.provider ?? env.AURA_VISUAL_PROVIDER ?? 'latentsync';
+  if (!['latentsync', 'quicktalk'].includes(provider)) throw new Error('visualResponse.provider must be latentsync or quicktalk');
+  const result = { provider, enabled: input.enabled === true || (input.enabled === undefined && env.AURA_LATENTSYNC_ENABLED === '1') };
   if (input.enabled !== undefined && typeof input.enabled !== 'boolean') throw new Error('visualResponse.enabled must be boolean');
+  if (provider === 'quicktalk') {
+    let url;
+    try { url = new URL(input.remoteUrl ?? env.AURA_QUICKTALK_URL); } catch {}
+    if (!url || url.username || url.password || url.pathname !== '/' || url.search || url.hash
+      || (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) {
+      throw new Error('QuickTalk requires a configured HTTPS or local HTTP origin');
+    }
+    result.remoteUrl = url.origin;
+    if (input.quickTalkStreaming !== undefined && typeof input.quickTalkStreaming !== 'boolean') {
+      throw new Error('visualResponse.quickTalkStreaming must be boolean');
+    }
+    result.quickTalkStreaming = input.quickTalkStreaming ?? true;
+  }
   for (const [name, fallback] of Object.entries(defaults)) {
     const variable = name.replace(/[A-Z]/g, x => '_' + x).toUpperCase();
     const value = input[name] ?? env['AURA_LATENTSYNC_' + variable] ?? fallback;
@@ -58,8 +82,8 @@ export function validateVisualRequest(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw httpError(400, 'JSON object required');
   const allowed = ['text', 'voice', 'model', 'taskId', 'sessionId'];
   if (Object.keys(value).some(key => !allowed.includes(key))) throw httpError(400, 'Unknown visual request field');
-  if (typeof value.text !== 'string' || !value.text.trim() || value.text.length > 240 || /[\x00-\x08\x0b-\x1f]/.test(value.text)) {
-    throw httpError(400, 'text must contain 1–240 characters');
+  if (typeof value.text !== 'string' || !value.text.trim() || value.text.length > MAX_TEXT || /[\x00-\x08\x0b-\x1f]/.test(value.text)) {
+    throw httpError(400, `数字人回复文本须为 1–${MAX_TEXT} 字符`);
   }
   for (const key of ['taskId', 'sessionId']) {
     if (typeof value[key] !== 'string' || !value[key].trim() || value[key].length > 256 || /[\x00-\x1f]/.test(value[key])) {
@@ -76,7 +100,7 @@ export function validateVisualRequest(value) {
 }
 
 export function pcmWave(pcm) {
-  if (!Buffer.isBuffer(pcm) || !pcm.length || pcm.length % 2 || pcm.length > MAX_PCM) throw new Error('Invalid or oversized TTS PCM');
+  if (!Buffer.isBuffer(pcm) || !pcm.length || pcm.length % 2 || pcm.length > MAX_PCM) throw new Error('语音数据无效或回复时长超过 5 分钟');
   const h = Buffer.alloc(44);
   h.write('RIFF'); h.writeUInt32LE(36 + pcm.length, 4); h.write('WAVEfmt ', 8);
   h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);
@@ -103,13 +127,15 @@ async function filesUnder(root, suffixes) {
 
 /** Spawn one owned process group. Abort never signals an unrelated process.
  * Promise settles on close, not kill(), so capacity stays occupied until exit. */
-export function runVisualProcess(command, args, { cwd, env, signal, onLine = () => {}, timeoutMs = 90 * 60 * 1000, maxOutput = 2 * 1024 * 1024 } = {}) {
+export function runVisualProcess(command, args, { cwd, env, signal, input, output: consumeOutput, onLine = () => {}, timeoutMs = 90 * 60 * 1000, maxOutput = 2 * 1024 * 1024 } = {}) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(new Error('Visual preparation cancelled')); return; }
-    const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { cwd, env, detached: true, stdio: [input ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
+    const pipeAbort = new AbortController();
     let output = '', pending = '', failure, killer;
     const stop = () => {
       failure ??= new Error('Visual preparation cancelled or timed out');
+      pipeAbort.abort();
       if (child.pid) {
         try { process.kill(-child.pid, 'SIGTERM'); } catch {}
         killer ??= setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, 2000);
@@ -126,9 +152,16 @@ export function runVisualProcess(command, args, { cwd, env, signal, onLine = () 
       for (const line of lines) { try { onLine(line); } catch (error) { failure = error; stop(); } }
       if (pending.length > 65536) { pending = pending.slice(-65536); failure = new Error('Visual subprocess line limit exceeded'); stop(); }
     };
-    child.stdout.on('data', receive); child.stderr.on('data', receive);
+    const pipes = [];
+    const monitor = promise => pipes.push(promise.catch(error => { failure ??= error; stop(); }));
+    if (input) monitor(pipeline(input(pipeAbort.signal), child.stdin, { signal: pipeAbort.signal }));
+    if (consumeOutput) monitor(consumeOutput(child.stdout));
+    else child.stdout.on('data', receive);
+    child.stderr.on('data', receive);
     child.once('error', error => { failure = error; });
-    child.once('close', (code, termSignal) => {
+    child.once('close', async (code, termSignal) => {
+      if (code !== 0) pipeAbort.abort();
+      await Promise.all(pipes);
       clearTimeout(timer); clearTimeout(killer); signal?.removeEventListener('abort', stop);
       // A shell/ffmpeg descendant may outlive its Python parent after SIGTERM.
       // Reap only this child's still-owned group before releasing capacity.
@@ -152,6 +185,7 @@ function byteRange(value, size) {
 }
 
 export function createVisualResponse({ config, tts, instance, connection, diagnostic = async () => {},
+  readQuickTalkToken = async () => process.env.AURA_QUICKTALK_TOKEN,
   // Dependency injection is code-only for focused tests, never a plugin option.
   run = runVisualProcess, preflight: injectedPreflight, render: injectedRender, verify: injectedVerify,
   clock = Date.now } = {}) {
@@ -166,21 +200,25 @@ export function createVisualResponse({ config, tts, instance, connection, diagno
     PYTHONDONTWRITEBYTECODE: '1', PYTHONUNBUFFERED: '1',
   });
   const assertLive = job => { if (job.abort.signal.aborted || job.state !== 'preparing') throw new Error('Visual preparation cancelled'); };
-  const status = job => ({ id: job.id, state: job.state, stage: job.stage,
+  const status = job => ({ id: job.id, provider: cfg.provider, state: job.state, stage: job.stage,
     elapsedSeconds: Math.max(0, ((job.finishedAt ?? clock()) - job.createdAt) / 1000),
     taskId: job.request.taskId, sessionId: job.request.sessionId, cacheHit: job.cacheHit,
     ...(job.progress ? { progress: job.progress } : {}), ...(job.duration ? { duration: job.duration } : {}),
     ...(job.state === 'ready' ? { mediaUrl: `/aura/visual/media?id=${job.id}&ticket=${job.ticket}` } : {}),
+    ...(job.streamBytes && ['preparing', 'ready'].includes(job.state) ? {
+      streamUrl: `/aura/visual/media?id=${job.id}&ticket=${job.ticket}&stream=1`, streamMime: STREAM_MIME,
+    } : {}),
     ...(job.error ? { error: job.error } : {}),
     ...(job.cancelReason ? { cancelReason: job.cancelReason, cancelStage: job.cancelStage } : {}),
   });
   const record = async job => {
     // Never write token, ticket, mediaUrl or subprocess environment to a log.
-    const evidence = { event: 'visual-response', id: job.id, state: job.state, stage: job.stage,
+    const evidence = { event: 'visual-response', id: job.id, provider: cfg.provider, state: job.state, stage: job.stage,
       taskId: job.request.taskId, sessionId: job.request.sessionId, replyText: job.request.text,
       voice: job.request.voice, model: job.request.model, createdAt: job.createdAt,
       elapsedSeconds: (clock() - job.createdAt) / 1000, duration: job.duration,
       cacheHit: job.cacheHit, hashes: { ...job.hashes }, timeline: job.timeline.map(entry => ({ ...entry })), progress: job.progress && { ...job.progress },
+      ...(job.remoteMetrics ? { remoteMetrics: { ...job.remoteMetrics } } : {}),
       ...(job.error ? { error: job.error } : {}),
       ...(job.cancelReason ? { cancelReason: job.cancelReason, cancelStage: job.cancelStage } : {}) };
     // Diffusion callbacks can arrive faster than disk logging. Preserve order
@@ -227,6 +265,23 @@ export function createVisualResponse({ config, tts, instance, connection, diagno
 
   async function preflight(job) {
     if (injectedPreflight) return injectedPreflight(job, cfg);
+    if (cfg.provider === 'quicktalk') {
+      for (const executable of [cfg.ffmpeg, cfg.ffprobe]) {
+        if (!(await stat(executable)).isFile()) throw new Error('Missing configured visual executable');
+      }
+      const token = await readQuickTalkToken();
+      if (typeof token !== 'string' || !/^[\x21-\x7e]+$/.test(token)) throw new Error('QuickTalk token is unavailable');
+      job.quickTalkHeaders = { authorization: 'Bearer ' + token };
+      const signal = AbortSignal.any([job.abort.signal, AbortSignal.timeout(5000)]);
+      const info = await quickTalkJson('/health', { headers: job.quickTalkHeaders, signal });
+      if (info?.ready !== true || info.version !== 'quicktalk-v3'
+        || typeof info.engineSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(info.engineSha256)) {
+        throw new Error('QuickTalk is unavailable or missing its model identity');
+      }
+      if (info.sourceSha256 !== SOURCE_SHA256) throw new Error('QuickTalk is using an unapproved Wan source');
+      job.quickTalkStreaming = cfg.quickTalkStreaming && info.parts === true;
+      return { source: info.sourceSha256, engine: info.engineSha256 };
+    }
     // Verify every required local asset before spending TTS or GPU work. Hash
     // actual code/config/model bytes, not git revision labels or fake probes.
     const inputs = [SOURCE, WRAPPER, ADAPTER, path.join(cfg.envDir, 'wan-approved-22s/run.py'),
@@ -243,7 +298,7 @@ export function createVisualResponse({ config, tts, instance, connection, diagno
     }
     const hashes = {};
     for (const file of inputs) { assertLive(job); hashes[file] = await hashFile(file); }
-    if (hashes[SOURCE] !== '620d5586a80d6507a996eae9913933b103d3154ebbb49ecef90ecf839ea7e97f') {
+    if (hashes[SOURCE] !== SOURCE_SHA256) {
       throw new Error('Approved Wan source hash changed; refusing unverified base');
     }
     // Import/version/device check is explicitly not generation evidence.
@@ -253,9 +308,187 @@ export function createVisualResponse({ config, tts, instance, connection, diagno
     return { source: hashes[SOURCE], wrapper: hashes[WRAPPER], engine: digest(JSON.stringify({ hashes, settings: SETTINGS, probe, paths: cfg })) };
   }
 
+  function quickTalkRequest(route, { headers, signal, method = 'GET', body }) {
+    const url = new URL(cfg.remoteUrl + route);
+    const request = url.protocol === 'https:' ? requestHttps : requestHttp;
+    return new Promise((resolve, reject) => {
+      // Electron's Undici can fatally assert when a paused response receives an HTTP/1.0 FIN.
+      const outgoing = request(url, { method, signal, agent: false,
+        headers: body ? { ...headers, 'content-length': body.byteLength } : headers }, response => {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          response.destroy();
+          reject(new Error(`QuickTalk request failed (HTTP ${response.statusCode})`));
+        } else resolve(response);
+      });
+      outgoing.once('error', () => reject(new Error('QuickTalk connection interrupted or timed out')));
+      outgoing.end(body);
+    });
+  }
+
+  async function quickTalkJson(route, options) {
+    const response = await quickTalkRequest(route, options);
+    const chunks = [];
+    let size = 0;
+    try {
+      for await (const chunk of response) {
+        size += chunk.length;
+        if (size > 64 * 1024) throw new Error('Oversized status response');
+        chunks.push(chunk);
+      }
+      if (!response.complete) throw new Error('Incomplete status response');
+      return JSON.parse(Buffer.concat(chunks, size).toString('utf8'));
+    } catch {
+      throw new Error('QuickTalk returned an invalid or incomplete status response');
+    }
+  }
+
+  async function* mp4Body(route, { headers, signal }, limit = MAX_MEDIA) {
+    const response = await quickTalkRequest(route, { headers, signal });
+    const length = response.headers['content-length'];
+    if (response.headers['content-type']?.split(';')[0] !== 'video/mp4' || Number(length) > limit) {
+      response.destroy();
+      throw new Error('QuickTalk returned an invalid MP4 response');
+    }
+    let size = 0;
+    try {
+      for await (const chunk of response) {
+        size += chunk.length;
+        if (size > limit) throw new Error('QuickTalk MP4 exceeds the playback limit');
+        yield chunk;
+      }
+    } catch (error) {
+      if (error?.code === 'ECONNRESET') throw new Error('QuickTalk media transfer was interrupted');
+      throw error;
+    }
+    if (!size) throw new Error('QuickTalk returned empty media');
+    if (!response.complete || (length !== undefined && size !== Number(length))) throw new Error('QuickTalk media transfer was interrupted');
+  }
+
+  async function* quickTalkVideo(job, route, { headers, signal }) {
+    let segment = 0, end = 0, received = 0, initialized = false;
+    while (true) {
+      const info = await quickTalkJson(route, { headers, signal });
+      if (!['queued', 'running', 'ready'].includes(info?.state) || !Array.isArray(info.parts)
+        || info.parts.length < segment || info.parts.length > 302) throw new Error('QuickTalk returned invalid segment status');
+      const phase = info.state === 'queued' ? 'queued' : 'rendering';
+      if (job.stage !== phase) stage(job, phase);
+      if (info.initReady === true && !initialized) {
+        yield* mp4Body(route + '/init', { headers, signal }, 1024 * 1024);
+        initialized = true;
+      }
+      for (; initialized && segment < info.parts.length; segment++) {
+        const part = info.parts[segment];
+        if (!part || part.index !== segment || !Number.isFinite(part.startSeconds) || !Number.isFinite(part.durationSeconds)
+          || Math.abs(part.startSeconds - end) > .002 || !(part.durationSeconds > 0 && part.durationSeconds <= 2.1)) {
+          throw new Error('QuickTalk returned out-of-order video segments');
+        }
+        end = part.startSeconds + part.durationSeconds;
+        for await (const chunk of mp4Body(route + '/parts/' + segment, { headers, signal }, 8 * 1024 * 1024)) {
+          received += chunk.byteLength;
+          if (received > MAX_MEDIA) throw new Error('QuickTalk MP4 exceeds the playback limit');
+          yield chunk;
+        }
+      }
+      if (info.state === 'ready') {
+        if (!segment || Math.abs(job.duration - end) > .15) throw new Error('QuickTalk did not supply all video segments');
+        const values = QUICKTALK_METRICS.map(key => [key, info.metrics?.[key]]);
+        job.remoteMetrics = Object.fromEntries(values.filter(([, value]) => Number.isFinite(value) && value >= 0));
+        return;
+      }
+      if (!initialized && info.parts.length) throw new Error('QuickTalk did not supply its initial video');
+      await delay(120, undefined, { signal });
+    }
+  }
+
+  async function publishFragments(job, source) {
+    const file = await open(path.join(job.dir, 'stream.mp4'), 'wx', 0o600);
+    let total = 0, offset = 0, remaining = 0, next = 'ftyp', type;
+    const header = Buffer.alloc(8);
+    let headerBytes = 0;
+    try {
+      for await (const chunk of source) {
+        total += chunk.length;
+        if (total > MAX_MEDIA) throw new Error('QuickTalk MP4 exceeds the playback limit');
+        await file.writeFile(chunk);
+        let i = 0;
+        while (i < chunk.length) {
+          if (remaining === 0) {
+            const bytes = Math.min(8 - headerBytes, chunk.length - i);
+            chunk.copy(header, headerBytes, i, i + bytes);
+            i += bytes; offset += bytes; headerBytes += bytes;
+            if (headerBytes < 8) break;
+            headerBytes = 0;
+            const size = header.readUInt32BE(0);
+            type = header.toString('ascii', 4, 8);
+            if (type !== next || size <= 8 || size > MAX_MEDIA) throw new Error('Invalid fragmented MP4 from local muxer');
+            remaining = size - 8;
+          }
+          const bytes = Math.min(remaining, chunk.length - i);
+          remaining -= bytes; i += bytes; offset += bytes;
+          if (remaining > 0) continue;
+          next = { ftyp: 'moov', moov: 'moof', moof: 'mdat', mdat: 'moof' }[type];
+          if (type === 'mdat') {
+            if (!job.streamBytes) {
+              job.timeline.push({ stage: 'first-segment', elapsedSeconds: (clock() - job.createdAt) / 1000 });
+              void record(job);
+            }
+            job.streamBytes = offset;
+          }
+        }
+      }
+      if (!job.streamBytes || job.streamBytes !== total || headerBytes || remaining) throw new Error('Incomplete fragmented MP4 from local muxer');
+    } finally { await file.close(); }
+  }
+
+  async function renderStreamingQuickTalk(job, route, headers, signal) {
+    const options = { cwd: job.dir, env, signal, timeoutMs: 15 * 60 * 1000 };
+    // One encoder and one audio clock for the whole reply, including every keyframe boundary.
+    await run(cfg.ffmpeg, ['-v', 'error', '-xerror', '-nostdin', '-probesize', '32', '-analyzeduration', '1', '-f', 'mp4', '-i', 'pipe:0',
+      '-i', path.join(job.dir, 'reply.wav'), '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
+      '-map_metadata', '-1', '-movflags', '+empty_moov+default_base_moof+frag_keyframe+skip_trailer',
+      '-frag_duration', '500000', '-f', 'mp4', 'pipe:1'], {
+      ...options, input: pipeSignal => quickTalkVideo(job, route, { headers, signal: AbortSignal.any([signal, pipeSignal]) }),
+      output: source => publishFragments(job, source),
+    });
+    assertLive(job);
+    stage(job, 'muxing');
+    await run(cfg.ffmpeg, ['-v', 'error', '-xerror', '-nostdin', '-i', path.join(job.dir, 'stream.mp4'),
+      '-map', '0:v:0', '-map', '0:a:0', '-c', 'copy', '-movflags', '+faststart', path.join(job.dir, 'ready.mp4')], options);
+  }
+
+  async function renderQuickTalk(job, wav) {
+    const route = '/v1/jobs/' + job.id;
+    const headers = job.quickTalkHeaders;
+    const signal = AbortSignal.any([job.abort.signal, AbortSignal.timeout(15 * 60 * 1000)]);
+    try {
+      stage(job, 'uploading');
+      const receipt = await quickTalkRequest(route, { method: 'POST', headers: { ...headers, 'content-type': 'audio/wav',
+        ...(job.quickTalkStreaming ? { 'x-quicktalk-parts': '1' } : {}) }, body: wav, signal });
+      receipt.destroy();
+      if (job.quickTalkStreaming) return await renderStreamingQuickTalk(job, route, headers, signal);
+      for (;;) {
+        const info = await quickTalkJson(route, { headers, signal });
+        if (info.state === 'ready') break;
+        if (!['queued', 'running'].includes(info.state)) throw new Error('QuickTalk could not prepare the current reply');
+        const phase = info.state === 'queued' ? 'queued' : 'rendering';
+        if (job.stage !== phase) stage(job, phase);
+        await delay(500, undefined, { signal });
+      }
+      stage(job, 'downloading');
+      const file = path.join(job.dir, 'raw.mp4');
+      await pipeline(mp4Body(route + '/media', { headers, signal }), createWriteStream(file, { flags: 'wx', mode: 0o600 }), { signal });
+    } finally {
+      // Independent deadline so a cancelled download can still release its remote job.
+      try {
+        (await quickTalkRequest(route, { method: 'DELETE', headers, signal: AbortSignal.timeout(3000) })).destroy();
+      } catch {}
+    }
+  }
+
   async function verify(job, file) {
     if (injectedVerify) return injectedVerify(job, file);
-    const options = { cwd: job.dir, env, signal: job.abort.signal, timeoutMs: 120000 };
+    if (cfg.provider === 'quicktalk' && (await stat(file)).size > MAX_MEDIA) throw new Error('QuickTalk MP4 exceeds the playback limit');
+    const options = { cwd: job.dir, env, signal: job.abort.signal, timeoutMs: 300000 };
     const probe = JSON.parse(await run(cfg.ffprobe, ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', file], options));
     const videos = probe.streams?.filter(s => s.codec_type === 'video') || [];
     const audios = probe.streams?.filter(s => s.codec_type === 'audio') || [];
@@ -272,8 +505,21 @@ export function createVisualResponse({ config, tts, instance, connection, diagno
     return { media: await hashFile(file), duration, videoDuration: vd, audioDuration: ad, decoded: true };
   }
 
-  async function render(job) {
+  async function render(job, wav) {
     if (injectedRender) return injectedRender(job, cfg, (name, value) => stage(job, name, value));
+    if (cfg.provider === 'quicktalk') await renderQuickTalk(job, wav);
+    else await renderLatentSync(job);
+    if (job.quickTalkStreaming) return;
+    stage(job, 'muxing');
+    // Only the render's video and this reply's PCM enter the playback file.
+    const videoCodec = cfg.provider === 'quicktalk'
+      ? ['-vf', 'fps=25', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p'] : ['-c:v', 'copy'];
+    await run(cfg.ffmpeg, ['-v', 'error', '-xerror', '-nostdin', '-y', '-i', path.join(job.dir, 'raw.mp4'), '-i', path.join(job.dir, 'reply.wav'),
+      '-map', '0:v:0', '-map', '1:a:0', ...videoCodec, '-c:a', 'aac', '-b:a', '128k', '-t', String(job.duration), '-movflags', '+faststart',
+      '-map_metadata', '-1', path.join(job.dir, 'ready.mp4')], { cwd: job.dir, env, signal: job.abort.signal, timeoutMs: 300000 });
+  }
+
+  async function renderLatentSync(job) {
     await copyFile(SOURCE, path.join(job.dir, 'source.mp4'));
     // Isolate upstream's fixed `temp` directory and relative configuration. Do
     // not create/remove temp files inside the existing model repository.
@@ -299,12 +545,6 @@ export function createVisualResponse({ config, tts, instance, connection, diagno
     const result = JSON.parse(await readFile(path.join(job.dir, 'render-result.json'), 'utf8'));
     if (result.finiteDecode !== true || !(result.decodedFrames >= Math.floor(job.duration * 25)) || !(result.stepsCompleted >= 20)
       || result.seed !== 1247 || result.steps !== 20 || result.guidance !== 1.5) throw new Error('Missing real finite renderer evidence');
-    stage(job, 'muxing');
-    // Explicit mapping: only generated video and THIS reply's PCM WAV. Never
-    // copy the source track or the pipeline's internally encoded audio.
-    await run(cfg.ffmpeg, ['-v', 'error', '-xerror', '-nostdin', '-y', '-i', path.join(job.dir, 'raw.mp4'), '-i', path.join(job.dir, 'reply.wav'),
-      '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-t', String(job.duration), '-movflags', '+faststart',
-      '-map_metadata', '-1', path.join(job.dir, 'ready.mp4')], { cwd: job.dir, env, signal: job.abort.signal, timeoutMs: 120000 });
   }
 
   async function execute(job) {
@@ -323,20 +563,41 @@ export function createVisualResponse({ config, tts, instance, connection, diagno
       stage(job, 'preflight');
       job.hashes = await preflight(job); assertLive(job);
       stage(job, 'tts');
-      const chunks = []; let bytes = 0;
-      for (const text of textSegments(job.request.text, 60)) {
-        assertLive(job);
-        await tts.stream({ text, voice: job.request.voice, model: job.request.model, signal: job.abort.signal,
-          onChunk(chunk) { assertLive(job); bytes += chunk.length; if (bytes > MAX_PCM) throw new Error('TTS reply exceeds 25 seconds'); chunks.push(Buffer.from(chunk)); } });
+      const segments = textSegments(job.request.text, 60);
+      const partChunks = segments.map(() => []);
+      const ttsFailure = new AbortController();
+      const signal = AbortSignal.any([job.abort.signal, ttsFailure.signal]);
+      let next = 0, bytes = 0;
+      async function synthesizeParts() {
+        try {
+          while (next < segments.length) {
+            signal.throwIfAborted();
+            const index = next++;
+            await tts.stream({ text: segments[index], voice: job.request.voice, model: job.request.model, signal,
+              onChunk(chunk) {
+                signal.throwIfAborted();
+                bytes += chunk.length;
+                if (bytes > MAX_PCM) {
+                  ttsFailure.abort(new Error('数字人回复时长超过 5 分钟'));
+                  signal.throwIfAborted();
+                }
+                partChunks[index].push(Buffer.from(chunk));
+              },
+            });
+          }
+        } catch (error) { ttsFailure.abort(error); }
       }
+      const concurrency = cfg.provider === 'quicktalk' ? 2 : 1;
+      await Promise.all(Array.from({ length: Math.min(concurrency, segments.length) }, synthesizeParts));
+      signal.throwIfAborted();
       assertLive(job);
-      const pcm = Buffer.concat(chunks); const wav = pcmWave(pcm);
+      const pcm = Buffer.concat(partChunks.flat(), bytes); const wav = pcmWave(pcm);
       job.duration = pcm.length / 32000;
       if (job.duration < .2) throw new Error('TTS reply is too short');
       job.hashes.pcm = digest(pcm); job.hashes.wav = digest(wav);
       await writeFile(path.join(job.dir, 'reply.wav'), wav, { mode: 0o600 });
       const key = digest(JSON.stringify({ pcm: job.hashes.pcm, ...job.hashes, settings: SETTINGS }));
-      const cached = cache.get(key);
+      const cached = cfg.provider === 'latentsync' && cache.get(key);
       if (cached) {
         stage(job, 'validating');
         try {
@@ -345,13 +606,13 @@ export function createVisualResponse({ config, tts, instance, connection, diagno
           await copyFile(cached.file, path.join(job.dir, 'ready.mp4')); job.cacheHit = true;
         } catch (error) { assertLive(job); cache.delete(key); }
       }
-      if (!job.cacheHit) await render(job);
+      if (!job.cacheHit) await render(job, wav);
       assertLive(job); stage(job, 'validating');
       const check = await verify(job, path.join(job.dir, 'ready.mp4')); assertLive(job);
       job.hashes.media = check.media;
       // Cache only exact PCM/source/code/config identities verified above; copy
       // independent of job cleanup, bounded to four process-local entries.
-      if (!job.cacheHit) {
+      if (!job.cacheHit && cfg.provider === 'latentsync') {
         const cacheDir = path.join(root, 'cache'); await mkdir(cacheDir, { recursive: true, mode: 0o700 });
         const file = path.join(cacheDir, key + '.mp4'); await copyFile(path.join(job.dir, 'ready.mp4'), file);
         cache.set(key, { file, media: check.media });
@@ -384,17 +645,36 @@ export function createVisualResponse({ config, tts, instance, connection, diagno
     if (!job || job.owner !== token) throw httpError(404, 'Visual preparation not found');
     return job;
   }
+  async function* streamMedia(job, signal) {
+    const file = await open(path.join(job.dir, 'stream.mp4'), 'r');
+    let offset = 0;
+    try {
+      while (true) {
+        signal.throwIfAborted();
+        if (!['preparing', 'ready'].includes(job.state)) throw new Error('Visual stream ended before completion');
+        const size = Math.min(64 * 1024, job.streamBytes - offset);
+        if (size > 0) {
+          const buffer = Buffer.allocUnsafe(size);
+          const { bytesRead } = await file.read(buffer, 0, size, offset);
+          if (!bytesRead) throw new Error('Visual stream ended before completion');
+          offset += bytesRead;
+          yield buffer.subarray(0, bytesRead);
+        } else if (job.state === 'ready') return;
+        else await delay(40, undefined, { signal });
+      }
+    } finally { await file.close(); }
+  }
   return {
     create(value, token) {
       const request = validateVisualRequest(value);
-      if (!cfg.enabled || disposed) throw httpError(503, 'Local visual preparation is disabled');
+      if (!cfg.enabled || disposed) throw httpError(503, 'Visual preparation is disabled');
       prune();
       const fingerprint = digest(JSON.stringify(request));
       for (const job of jobs.values()) if (job.owner === token && job.request.taskId === request.taskId && job.request.sessionId === request.sessionId) {
         if (job.fingerprint !== fingerprint) throw httpError(409, 'This task already has a different visual reply');
         return status(job); // Never restart failed/cancelled/costly duplicate work.
       }
-      if (active) throw httpError(429, 'One local visual preparation is already active');
+      if (active) throw httpError(429, 'One visual preparation is already active');
       if (jobs.size >= MAX_JOBS) throw httpError(429, 'Visual job limit reached; delete completed preparations');
       const id = randomUUID();
       const job = { id, owner: token, fingerprint, request, state: 'preparing', stage: 'preflight', createdAt: clock(),
@@ -417,7 +697,11 @@ export function createVisualResponse({ config, tts, instance, connection, diagno
       }
       const url = new URL(request.url), id = url.searchParams.get('id'), ticket = url.searchParams.get('ticket');
       const job = UUID.test(id || '') && jobs.get(id);
-      if (!job || job.state !== 'ready' || !UUID.test(ticket || '') || ticket !== job.ticket) return new Response(null, { status: 404 });
+      const progressive = url.searchParams.get('stream') === '1';
+      if (!job || !UUID.test(ticket || '') || ticket !== job.ticket
+        || (progressive ? !job.streamBytes || !['preparing', 'ready'].includes(job.state) : job.state !== 'ready')) {
+        return new Response(null, { status: 404 });
+      }
       // Capability + current seat are required even for an admitted in-process
       // Peer. Never put the instance token in a video URL or a diagnostic.
       const live = new AbortController();
@@ -427,6 +711,16 @@ export function createVisualResponse({ config, tts, instance, connection, diagno
       let transferred = false;
       try {
         if (!['GET', 'HEAD'].includes(request.method)) return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
+        if (progressive) {
+          const headers = { 'content-type': 'video/mp4', 'accept-ranges': 'none', 'cache-control': 'no-store',
+            'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' };
+          if (signal.aborted) return new Response(null, { status: 409 });
+          if (request.method === 'HEAD') return new Response(null, { headers });
+          if (request.headers.has('range')) return new Response(null, { status: 416, headers });
+          const stream = Readable.from(streamMedia(job, signal), { signal });
+          stream.once('close', detach); transferred = true;
+          return new Response(Readable.toWeb(stream), { headers });
+        }
         const file = path.join(job.dir, 'ready.mp4'), { size } = await stat(file);
         if (signal.aborted || job.state !== 'ready') return new Response(null, { status: 409 });
         const headers = { 'content-type': 'video/mp4', 'content-length': String(size), 'accept-ranges': 'bytes',

@@ -203,7 +203,8 @@ const call = container.querySelector('button[aria-label="Start call"]');
 assert.ok(call, 'a previously saved call must reopen as Start call, not Hang up');
 assert.equal(container.querySelector('button[aria-label="End call"]'), null);
 assert.equal(container.querySelector('[data-aura-phase]').dataset.auraPhase, 'idle', 'restart does not restore an unconnected call');
-assert.equal(call.parentElement.getAttribute('role'), 'group', 'interactive call button must not be hidden inside role=img');
+assert.ok(call.closest('[role="group"]'), 'interactive call button belongs to the stage group');
+assert.equal(call.closest('[role="img"]'), null, 'interactive controls are not hidden inside role=img');
 
 /* The version and the reload control live inside the profile card; a stale
  * page and a broken feature look identical without them. */
@@ -280,24 +281,30 @@ await new Promise(resolve => setTimeout(resolve, 30));
 const character = container.querySelector('[data-aura-visual="single-character"]');
 assert.ok(character, 'single mode mounts the single-utterance player, not the call portrait');
 const picture = character.querySelector('img');
-assert.equal(picture.getAttribute('src'), '/aura/character/short-hair.png');
-assert.equal(picture.style.objectFit, 'contain');
-assert.equal(character.dataset.auraState, 'idle');
-assert.equal(character.dataset.auraClip, 'front');
+assert.equal(picture.getAttribute('src'), '/aura/character/side.png');
+assert.equal(picture.style.objectFit, 'cover');
+assert.equal(character.dataset.auraState, 'initial');
+assert.equal(character.dataset.auraClip, 'side');
 assert.equal(character.style.inset, '0px', 'background spans the entire controlled pane');
 assert.match(character.style.background, /linear-gradient/);
 assert.equal(container.querySelectorAll('canvas, audio').length, 0, 'no old face canvas or duplicate sound owner');
-const decoderLayers = [...character.querySelectorAll('video')];
-assert.equal(decoderLayers.length, 1, 'one decoder keeps idle/listening/thinking on the same timeline');
+const standby = character.querySelector('video:not([data-aura-reply-player])');
+const replyLayer = character.querySelector('[data-aura-reply-player]');
+const idleLayer = character.querySelector('[data-aura-idle-player]');
+const decoderLayers = [standby, replyLayer, idleLayer];
+assert.equal(character.querySelectorAll('video').length, 3, 'front and idle media stay separate from the answer audio owner');
+assert.equal(character.querySelector('[data-aura-idle-player]').hasAttribute('src'), false);
 for (const video of decoderLayers) {
   assert.equal(video.muted, true);
   assert.equal(video.playsInline, true);
-  assert.equal(video.preload, 'auto');
+  assert.equal(video.preload, video === idleLayer ? 'none' : 'auto');
   assert.equal(video.getAttribute('aria-hidden'), 'true');
   assert.equal(video.style.opacity, '0', 'idle does not expose an undecoded frame');
-  assert.equal(video.getAttribute('src'), '/aura/character/front.mp4', 'idle starts the approved silent frontal loop');
-  assert.equal(video.loop, true, 'variable-length idle/listening/thinking never uses a hardcoded split');
 }
+assert.equal(standby.getAttribute('src'), null, 'opening Aura does not start a video');
+assert.equal(character.querySelector('img').getAttribute('src'), '/aura/character/side.png');
+assert.match(container.querySelector('[data-aura-status-bar]').textContent, /未开始.*麦克风关闭/);
+assert.equal(replyLayer.getAttribute('src'), null, 'answer player is unloaded during idle');
 assert.equal(container.querySelectorAll('[data-aura-visual]').length, 1);
 assert.ok(container.querySelector('.aura-character textarea'));
 assert.ok(container.querySelector('button[aria-label="Start call"]'));
@@ -313,8 +320,8 @@ assert.ok(!container.querySelector('.aura-character'), 'particle mode restores o
 assert.ok(!container.querySelector('[data-aura-visual="single-character"]'),
   'switching to particles unmounts the player');
 assert.equal(container.querySelectorAll('video').length, 0);
-assert.equal(mediaLifecycle.pause - lifecycleBeforeSwitch.pause, 1, 'the only decoder pauses on switch');
-assert.equal(mediaLifecycle.load - lifecycleBeforeSwitch.load, 1, 'the only decoder releases its resources on switch');
+assert.equal(mediaLifecycle.pause - lifecycleBeforeSwitch.pause, 0, 'the unopened portrait has no active decoder');
+assert.equal(mediaLifecycle.load - lifecycleBeforeSwitch.load, 0, 'switching rest does not allocate a decoder');
 for (const video of decoderLayers) {
   assert.equal(video.getAttribute('src'), null);
   assert.equal(video.onloadeddata, null);

@@ -26,6 +26,15 @@ const dom = new JSDOM('<!doctype html><div id="root"></div>', {
   pretendToBeVisual: true, url: 'http://127.0.0.1:52147',
 });
 const { window } = dom;
+const originalTimeout = window.setTimeout.bind(window), originalClear = window.clearTimeout.bind(window);
+const speechWaits = new Map();
+let speechWaitId = 0;
+window.setTimeout = (fn, ms, ...args) => {
+  if (ms !== 30000) return originalTimeout(fn, ms, ...args);
+  speechWaits.set(--speechWaitId, () => fn(...args));
+  return speechWaitId;
+};
+window.clearTimeout = id => { if (!speechWaits.delete(id)) originalClear(id); };
 if (!continuous) window.localStorage.setItem('dsh-aura.prefs', JSON.stringify({ character: true, voice: 'longyan_v3', model: 'cosyvoice-v3-flash' }));
 const windowErrors = [];
 window.addEventListener('error', event => windowErrors.push(String(event.error || event.message)));
@@ -143,7 +152,7 @@ class WebSocketStub {
     }
     if (message.type === 'listen' && message.state === 'start') {
       const ready = () => reply({ type: 'listen', state: 'start', mode: 'manual' });
-      if (continuous) this.makeReady = ready; else ready();
+      if (continuous || sockets.length === 1) this.makeReady = ready; else ready();
       /* One partial so the caption path is exercised too. */
       /* A sentence-final partial is what allows the short pause to end the turn. */
       reply({ type: 'stt', text: '打开插件市场。', partial: true });
@@ -348,10 +357,24 @@ if (continuous) {
   root.unmount();
   console.log('mic.test.mjs: synthetic ten-turn call ok (NOT Mac microphone acceptance)');
 } else {
+const startedCharacter = container.querySelector('[data-aura-visual="single-character"]');
+const frontVideo = startedCharacter.querySelector('video');
+assert.equal(startedCharacter.dataset.auraState, 'listening');
+assert.equal(frontVideo.getAttribute('src'), '/aura/character/front.mp4', 'capture goes directly to the frontal micro-motion clip');
+assert.match(container.querySelector('[data-aura-status-bar]').textContent, /正在收音/);
+assert.equal(speechWaits.size, 1, 'single-mode visible capture arms one 30-second onset timer');
+for (let i = 0; i < 300; i += 1) liveNode.port.onmessage({ data: frame });
+assert.equal(socket.audio || 0, 0, 'six seconds of startup audio are queued before ASR readiness');
+socket.makeReady();
+assert.equal(socket.audio, 6 * 32000);
+assert.equal(speechWaits.size, 1, 'flushing six seconds of cached silence does not expire the visible wait');
+assert.equal(track.readyState, 'live');
+assert.equal(prompts.length, 0);
 /* 400 ms of speech, then 1000 ms of silence: the endpoint is 900 ms. */
 for (let i = 0; i < 20; i += 1) liveNode.port.onmessage({ data: loud });
 await new Promise((resolve) => setTimeout(resolve, 20));
 assert.equal(prompts.length, 0, 'speech alone must not finish a turn');
+assert.equal(speechWaits.size, 0, 'confirmed onset disarms the initial silence deadline');
 const audioBefore = socket.audio || 0;
 assert.ok(audioBefore > 0, 'audio must stream while the user talks');
 
@@ -424,7 +447,7 @@ running = false; render();
 await new Promise(resolve => setTimeout(resolve, 200));
 assert.equal(playbackSources.length, 0, 'single-character reply never schedules a separate PCM clock');
 assert.equal(requests.filter(request => request.url === '/aura/tts').length, 0);
-const answerVideo = character.querySelector('video');
+const answerVideo = character.querySelector('[data-aura-reply-player]');
 assert.match(answerVideo.getAttribute('src'), /^\/aura\/visual\/media\?/);
 assert.equal(answerVideo.muted, false, 'current answer video is the only sound owner');
 assert.equal(character.dataset.auraState, 'prepare', 'ready/queued media is not yet audible');
@@ -438,7 +461,11 @@ assert.equal(sockets.at(-1).sent.map(value => typeof value === 'string' ? JSON.p
   .some(message => message?.type === 'listen' && message.state === 'start'), true,
   'new capture starts immediately and exercises a later partial after single-mode AV cancellation');
 assert.equal(answerVideo.muted, true, 'new listening cancels the AV answer and returns the decoder to quiet front');
-assert.equal(answerVideo.getAttribute('src'), '/aura/character/front.mp4');
+const resumedFront = character.querySelector('video');
+resumedFront.onloadeddata();
+resumedFront.onplaying();
+assert.equal(answerVideo.getAttribute('src'), null);
+assert.equal(character.querySelector('video').getAttribute('src'), '/aura/character/front.mp4');
 assert.ok(requests.some(request => request.init.method === 'DELETE' && request.url === '/aura/visual?id=visual-mic-fixture'),
   'barge-in cancels the backend job as well as media playback');
 assert.equal(character.dataset.auraState, 'listening', 'barge-in preserves the new single listening stage');
@@ -459,13 +486,25 @@ await new Promise(resolve => setTimeout(resolve, 20));
 const afterHangup = container.querySelector('[data-aura-visual="single-character"]');
 assert.ok(afterHangup);
 assert.equal(afterHangup.dataset.auraState, 'idle', 'hangup must not restore stale single listening');
-assert.equal(afterHangup.dataset.auraClip, 'front');
-assert.equal(afterHangup.querySelector('img').getAttribute('src'), '/aura/character/short-hair.png');
-assert.equal(afterHangup.querySelector('video').getAttribute('src'), '/aura/character/front.mp4',
-  'returning from call restores quiet front, not side or a new turn.mp4');
+assert.equal(afterHangup.dataset.auraClip, 'side');
+assert.equal(afterHangup.querySelector('img').getAttribute('src'), '/aura/character/side.png');
+assert.equal(afterHangup.querySelector('video').getAttribute('src'), null,
+  'returning from call restores the idle portrait without reopening capture');
 assert.equal(stoppedTracks, 2);
 assert.equal(mediaCount, 2, 'hangup does not restart capture');
 assert.equal(configToggle().disabled, false, 'ended capture/call/playback unlocks config save');
+assert.equal(speechWaits.size, 0, 'hangup clears the prior capture deadline');
+const beforeTimeout = prompts.length;
+container.querySelector('[aria-label="Start listening"]').click();
+await new Promise(resolve => setTimeout(resolve, 30));
+assert.equal(speechWaits.size, 1);
+const [id, timeout] = [...speechWaits.entries()][0];
+speechWaits.delete(id); timeout();
+await new Promise(resolve => setTimeout(resolve, 20));
+assert.equal(track.readyState, 'ended');
+assert.equal(afterHangup.querySelector('video').getAttribute('src'), '/aura/character/front.mp4', 'onset timeout retains activated quiet front');
+assert.equal(prompts.length, beforeTimeout);
+assert.match(container.querySelector('[data-aura-status-bar] [role="alert"]').textContent, /30 秒内未听到讲话/);
 assert.deepEqual(windowErrors, []);
 
 root.unmount();

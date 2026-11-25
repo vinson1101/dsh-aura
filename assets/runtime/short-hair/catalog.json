@@ -1,0 +1,261 @@
+{
+  "schemaVersion": 1,
+  "character": "Aura 短发黑方领银项链",
+  "selection": "先筛状态、构图、棚景、姿态和音频用途，再按情绪与意图匹配；同类候选避开刚播放项。",
+  "sourceCatalog": "docs/参考资料/盛唐-微表情与肢体动作库/Aura素材标签.json",
+  "sourceSha256": "9f291286c04c58c323040ae85d7371091d5c63a7bb6edfa955ca615648f42f55",
+  "assets": [
+    {
+      "id": "wan-answer",
+      "path": "assets/previews/短发直播测试/首尾衔接预演/回答样片统一棚景.mp4",
+      "model": "Wan 3.0",
+      "state": "回答",
+      "emotion": "平静亲切",
+      "intent": "说明、回答问题",
+      "gesture": "无指定动作",
+      "pose": "正面半身→正面半身",
+      "audio_policy": "带原声的固定回复；用作说话基准",
+      "background": "统一棚景",
+      "status": "已认可",
+      "seconds": 10.0,
+      "width": 560,
+      "height": 712,
+      "fps": "30/1",
+      "has_audio_track": true,
+      "runtime": {
+        "enabled": false,
+        "roles": [],
+        "reason": "非自动待机用途；保留原始状态、情绪和意图标签"
+      }
+    },
+    {
+      "id": "h3-amused",
+      "path": "assets/previews/短发直播测试/H3-逗笑对照/H3-被逗开心.mp4",
+      "model": "H3",
+      "state": "互动",
+      "emotion": "开心",
+      "intent": "被逗笑",
+      "gesture": "笑容展开",
+      "pose": "略侧半身→笑眼半身",
+      "audio_policy": "静音播放",
+      "background": "原片",
+      "status": "已认可",
+      "seconds": 5.17,
+      "width": 768,
+      "height": 960,
+      "fps": "24/1",
+      "has_audio_track": true,
+      "runtime": {
+        "enabled": true,
+        "roles": [
+          "manual-interaction"
+        ],
+        "manualAction": "smile",
+        "src": "/aura/character/smile.mp4",
+        "audio": "silent",
+        "poseFamily": "three-quarter-half",
+        "backgroundFamily": "aura-studio",
+        "review": "原有互动预览；与新待机的衔接待重制或补过渡，不进入自动池"
+      }
+    },
+    {
+      "id": "h3-heart",
+      "path": "assets/previews/短发直播测试/H3-比心/短发半身-双手比心.mp4",
+      "model": "H3",
+      "state": "互动",
+      "emotion": "亲昵、俏皮",
+      "intent": "用户要比心",
+      "gesture": "胸前双手比心",
+      "pose": "略侧半身→举手→手放下",
+      "audio_policy": "静音播放",
+      "background": "原片",
+      "status": "已认可",
+      "seconds": 6.58,
+      "width": 768,
+      "height": 960,
+      "fps": "24/1",
+      "has_audio_track": false,
+      "runtime": {
+        "enabled": true,
+        "roles": [
+          "manual-interaction"
+        ],
+        "manualAction": "heart",
+        "src": "/aura/character/heart.mp4",
+        "audio": "silent",
+        "poseFamily": "three-quarter-half",
+        "backgroundFamily": "aura-studio",
+        "review": "原有互动预览；与新待机的衔接待重制或补过渡，不进入自动池"
+      }
+    },
+    {
+      "id": "h3-lean",
+      "path": "assets/previews/短发直播测试/首尾衔接预演/H3-俏皮探镜头.mp4",
+      "model": "H3",
+      "state": "互动",
+      "emotion": "好奇、俏皮",
+      "intent": "用户点互动；长待机低频",
+      "gesture": "前倾靠近镜头",
+      "pose": "略侧半身→脸部近景→半身",
+      "audio_policy": "静音播放",
+      "background": "棚景版；检查入场肩线",
+      "status": "预演素材",
+      "seconds": 6.58,
+      "width": 768,
+      "height": 960,
+      "fps": "24/1",
+      "has_audio_track": false,
+      "runtime": {
+        "enabled": true,
+        "roles": [
+          "idle-interaction",
+          "manual-interaction"
+        ],
+        "src": "/aura/character/idle-lean.mp4",
+        "poseFamily": "frontal-half",
+        "backgroundFamily": "aura-studio",
+        "audio": "silent",
+        "wave": false,
+        "route": [
+          "正面→侧身（现有return）",
+          "俏皮探镜头→侧身（h3-lean）",
+          "侧身→正面（现有turn）"
+        ],
+        "review": "静音半身往返；素材内姿态与背景细微差异仍需现场验收",
+        "manualAction": "lean"
+      }
+    },
+    {
+      "id": "h3-listen",
+      "path": "assets/previews/短发直播测试/首尾衔接预演/H3-专注聆听原片.mp4",
+      "model": "H3",
+      "state": "倾听",
+      "emotion": "专注",
+      "intent": "用户正在讲话",
+      "gesture": "安静注视",
+      "pose": "正面半身→正面半身",
+      "audio_policy": "静音播放",
+      "background": "原片",
+      "status": "预演素材",
+      "seconds": 5.17,
+      "width": 768,
+      "height": 992,
+      "fps": "24/1",
+      "has_audio_track": true,
+      "runtime": {
+        "enabled": false,
+        "roles": [],
+        "reason": "非自动待机用途；保留原始状态、情绪和意图标签"
+      }
+    },
+    {
+      "id": "h3-warm-answer-trial",
+      "path": "assets/previews/短发直播测试/H3-标签口播/平静亲切-无声讲话底片.mp4",
+      "model": "H3",
+      "state": "回答",
+      "emotion": "平静亲切",
+      "intent": "温和解释",
+      "gesture": "无指定动作",
+      "pose": "正面半身→自然讲话→正面静息",
+      "audio_policy": "无声讲话底片；任意回复需要独立口型驱动",
+      "background": "以 Wan 回答首帧为首尾参考，灰棚背景",
+      "status": "待确认；不自动选择",
+      "seconds": 10.125,
+      "width": 768,
+      "height": 992,
+      "fps": "24/1",
+      "has_audio_track": false,
+      "runtime": {
+        "enabled": false,
+        "roles": [],
+        "reason": "非自动待机用途；保留原始状态、情绪和意图标签"
+      }
+    },
+    {
+      "id": "front-quiet",
+      "path": "assets/previews/短发直播测试/无声倾听/短发正面直视-十秒无声倾听.mp4",
+      "state": "倾听、思考、回答后保持",
+      "emotion": "平静专注",
+      "intent": "用户收音、等待任务、回答后安静对视",
+      "gesture": "轻微自然动作",
+      "pose": "正面半身→正面半身",
+      "audio_policy": "静音播放",
+      "background": "已用正面棚景",
+      "status": "现有测试素材",
+      "runtime": {
+        "enabled": true,
+        "roles": [
+          "listening",
+          "thinking",
+          "quiet"
+        ],
+        "src": "/aura/character/front.mp4",
+        "poseFamily": "frontal-half",
+        "backgroundFamily": "aura-studio",
+        "audio": "silent",
+        "sourceFrames": [
+          1,
+          195
+        ]
+      }
+    },
+    {
+      "id": "idle-side",
+      "path": "assets/runtime/short-hair/idle-side-h3-matched.mp4",
+      "state": "待机",
+      "emotion": "放松、俏皮",
+      "intent": "长待机低频侧视，再回正面",
+      "gesture": "侧身往返",
+      "pose": "正面半身→侧身→正面半身",
+      "audio_policy": "静音播放",
+      "background": "待机同帧棚景，固定轻微校色",
+      "status": "已授权替换测试互动",
+      "runtime": {
+        "enabled": true,
+        "roles": [
+          "idle-interaction",
+          "manual-interaction"
+        ],
+        "src": "/aura/character/idle-side.mp4",
+        "poseFamily": "frontal-half",
+        "backgroundFamily": "aura-studio",
+        "audio": "silent",
+        "wave": false,
+        "route": [
+          "待机同帧起始",
+          "轻微转侧身后回同一正面姿态"
+        ],
+        "manualAction": "side",
+        "source": "H3同首尾帧10秒，固定色调校正",
+        "fps": 24,
+        "durationSeconds": 10.125
+      },
+      "review": "首尾使用同一待机帧，颜色已固定微调；非像素完全一致，切换主观验收待用户测试"
+    },
+    {
+      "id": "wan-wave",
+      "path": "assets/previews/短发直播测试/首尾衔接预演/挥手统一棚景.mp4",
+      "state": "互动",
+      "emotion": "亲切",
+      "intent": "用户点招手",
+      "gesture": "挥手招呼",
+      "pose": "全身→全身",
+      "audio_policy": "静音播放",
+      "background": "现有棚景",
+      "status": "旧全身预览；半身匹配待重制",
+      "runtime": {
+        "enabled": true,
+        "roles": [
+          "manual-interaction"
+        ],
+        "manualAction": "wave",
+        "src": "/aura/character/wave.mp4",
+        "audio": "silent",
+        "wave": true,
+        "poseFamily": "full-body",
+        "backgroundFamily": "aura-studio",
+        "review": "当前全身原片，不能冒充已完成半身一致性"
+      }
+    }
+  ]
+}

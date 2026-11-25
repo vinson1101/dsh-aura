@@ -21,7 +21,7 @@ import path from 'node:path';
 import { createAsr, openParaformerSession, withAllocationRetry } from './asr.js';
 import { WebSocketServer } from 'ws';
 import { randomUUID } from 'node:crypto';
-import { createKeyReader } from './secrets.js';
+import { createKeyReader, parseEnvFile } from './secrets.js';
 import { createTts, speakablePrefix, textSegments } from './tts.js';
 import { installTaskLayer } from './tasks.js';
 import { installInstance } from './instance.js';
@@ -42,8 +42,15 @@ const CREDENTIAL_KEY = 'dsh-aura/asr';
 // Exact, local-only allowlist: no URL, pathname or query value selects a file.
 // Keep the old portrait URL compatible with the existing static character mode.
 const CHARACTER_ASSETS = [
+  ['heart.mp4', './assets/previews/短发直播测试/H3-比心/短发半身-双手比心.mp4', 'video/mp4'],
+  ['smile.mp4', './assets/previews/短发直播测试/H3-逗笑对照/H3-被逗开心.mp4', 'video/mp4'],
+  ['wave.mp4', './assets/previews/短发直播测试/首尾衔接预演/挥手统一棚景.mp4', 'video/mp4'],
+
   ['short-hair.png', './assets/previews/短发直播测试/无声倾听/短发正面直视-参考帧.png', 'image/png'],
-  ['front.mp4', './assets/previews/短发直播测试/无声倾听/短发正面直视-十秒无声倾听.mp4', 'video/mp4'],
+  ['front.mp4', './assets/runtime/short-hair/front-loop-background-matched.mp4', 'video/mp4'],
+  ['catalog.json', './assets/runtime/short-hair/catalog.json', 'application/json'],
+  ['idle-side.mp4', './assets/runtime/short-hair/idle-side-h3-matched.mp4', 'video/mp4'],
+  ['idle-lean.mp4', './assets/runtime/short-hair/idle-lean.mp4', 'video/mp4'],
   ['side.png', './assets/runtime/short-hair/side.png', 'image/png'],
   ['turn.mp4', './assets/runtime/short-hair/turn.mp4', 'video/mp4'],
   ['listen.mp4', './assets/runtime/short-hair/listen.mp4', 'video/mp4'],
@@ -396,8 +403,14 @@ export function apply(ctx, config = {}) {
     }), 'dsh-aura: approved character asset');
   }
   const tts = createTts(config.tts || {}, readKey);
+  const visualOptions = visualConfig(config.visualResponse || {});
   const visual = createVisualResponse({
-    config: config.visualResponse || {}, instance,
+    config: visualOptions, instance,
+    async readQuickTalkToken() {
+      if (process.env.AURA_QUICKTALK_TOKEN) return process.env.AURA_QUICKTALK_TOKEN;
+      try { return parseEnvFile(await readFile(path.join(dshHome(), 'aura-secrets.env'), 'utf8')).AURA_QUICKTALK_TOKEN; }
+      catch { return undefined; }
+    },
     // This independent buffered path fixes PCM's actual format, without changing
     // ordinary streaming TTS or any current browser voice/model preference.
     tts: createTts({ ...(config.tts || {}), sampleRate: 16000 }, readKey),
@@ -405,10 +418,10 @@ export function apply(ctx, config = {}) {
     diagnostic: value => append(JSON.stringify({ at: new Date().toISOString(), ...value })),
   });
   ctx.effect(() => () => { void visual.dispose(); }, 'dsh-aura: local visual lifecycle');
-  const visualEnabled = visualConfig(config.visualResponse || {}).enabled;
-  installVisualSettings(ctx, { instance, enabled: visualEnabled, version: '0.35.4-visual.3' });
-  void append(JSON.stringify({ stage: 'visual_backend', v: '0.35.4-visual.3',
-    at: Date.now(), enabled: visualEnabled }));
+  const { enabled: visualEnabled, provider } = visualOptions;
+  installVisualSettings(ctx, { instance, enabled: visualEnabled, provider, version: '0.35.4-visual.4' });
+  void append(JSON.stringify({ stage: 'visual_backend', v: '0.35.4-visual.4',
+    at: Date.now(), enabled: visualEnabled, provider }));
   const visualApi = audioRoute(async (req, res, cancelled) => {
     res.setHeader('cache-control', 'no-store');
     try {
@@ -419,7 +432,7 @@ export function apply(ctx, config = {}) {
           sendJson(res, 400, { error: 'application/json required' }); return;
         }
         let body;
-        try { body = JSON.parse(await readBody(req, 8192)); }
+        try { body = JSON.parse(await readBody(req, 24 * 1024)); }
         catch { sendJson(res, 400, { error: 'invalid or oversized JSON body' }); return; }
         if (!cancelled.signal.aborted) sendJson(res, 202, visual.create(body, token));
       } else if (req.method === 'GET') sendJson(res, 200, visual.get(url.searchParams.get('id'), token));
