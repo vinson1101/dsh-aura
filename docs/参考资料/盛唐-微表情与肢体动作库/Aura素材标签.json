@@ -110,7 +110,7 @@
           "manual-interaction"
         ],
         "src": "/aura/character/idle-lean.mp4",
-        "poseFamily": "three-quarter-half",
+        "poseFamily": "frontal-half",
         "backgroundFamily": "aura-studio",
         "audio": "silent",
         "wave": false,
