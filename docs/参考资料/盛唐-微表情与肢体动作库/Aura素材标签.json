@@ -110,16 +110,14 @@
           "manual-interaction"
         ],
         "src": "/aura/character/idle-lean.mp4",
-        "poseFamily": "frontal-half",
+        "poseFamily": "three-quarter-half",
         "backgroundFamily": "aura-studio",
         "audio": "silent",
         "wave": false,
         "route": [
-          "正面→侧身（现有return）",
-          "俏皮探镜头→侧身（h3-lean）",
-          "侧身→正面（现有turn）"
+          "H3-俏皮探镜头原片（无额外转身拼接）"
         ],
-        "review": "静音半身往返；素材内姿态与背景细微差异仍需现场验收",
+        "review": "仅播放原始探镜头动作；与正面待机的姿态差异待用户验收，不插播旧转身视频",
         "manualAction": "lean"
       }
     },

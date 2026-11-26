@@ -419,8 +419,8 @@ export function apply(ctx, config = {}) {
   });
   ctx.effect(() => () => { void visual.dispose(); }, 'dsh-aura: local visual lifecycle');
   const { enabled: visualEnabled, provider } = visualOptions;
-  installVisualSettings(ctx, { instance, enabled: visualEnabled, provider, version: '0.35.4-visual.4' });
-  void append(JSON.stringify({ stage: 'visual_backend', v: '0.35.4-visual.4',
+  installVisualSettings(ctx, { instance, enabled: visualEnabled, provider, version: '0.35.4-visual.5' });
+  void append(JSON.stringify({ stage: 'visual_backend', v: '0.35.4-visual.5',
     at: Date.now(), enabled: visualEnabled, provider }));
   const visualApi = audioRoute(async (req, res, cancelled) => {
     res.setHeader('cache-control', 'no-store');

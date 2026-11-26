@@ -17,7 +17,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     // Each replacement needs its own scope. A top-level const breaks the next
     // classic-script load with a global lexical redeclaration error.
-    const AURA_VERSION = '0.35.4-visual.4';
+    const AURA_VERSION = '0.35.4-visual.5';
     diag('factory');
     /* A reload replaces this module but not the running audio graph: stop the
      * capture the previous instance left holding the microphone. */
