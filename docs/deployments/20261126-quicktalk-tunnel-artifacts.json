@@ -1,0 +1,10 @@
+{
+  "purpose": "Exact credential-free deployed launchd artifacts; credentials remain in macOS Keychain",
+  "sha256": {
+    "run-tunnel.sh": "7ba25a154d55b5dfa0ad65727fc7f9f5d2674d6ee601c0735f9d9bd9e3c86efd",
+    "askpass.sh": "463cd4e3c6ac03f2bfab182a4db729f3520b5f60159849ae1265b610e52d8ecc",
+    "com.vinson.aura-quicktalk-tunnel.plist": "85edebb62b6f4846b054df296218575620aae42716acb500ffe060a8a3ec23d0"
+  },
+  "runtimeDirectory": "/Users/vinson/Library/Application Support/aura-quicktalk-tunnel",
+  "launchAgent": "/Users/vinson/Library/LaunchAgents/com.vinson.aura-quicktalk-tunnel.plist"
+}

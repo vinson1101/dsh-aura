@@ -1,0 +1,185 @@
+{
+  "deploymentId": "dsh-aura-visual5-quicktalk-formal-r2-20261126",
+  "recordedAt": "2026-11-26T21:37:00+08:00",
+  "environment": "macOS DeepSeek Harness Desktop，profile desktop，Host http://127.0.0.1:56195；宿主 PID 38467 未重启（启动于 2026-11-19T17:12:03+08:00）",
+  "status": "installed-client-registered-page-disconnected-ui-refresh-needed",
+  "上线版本": "0.35.4-visual.5",
+  "上线原因": "安装 r2 正式包：恢复 h3-lean 的 poseFamily=frontal-half（保持自动待机资格），保留 idle-lean 原始 H3 视频（无 return/turn 拼接）。替代只做只读校验、未安装的 .5-r1。",
+  "authorization": "用户明确授权：先在 .4 基线执行 snapshot --with-sessions，再通过官方 plugin_manager 热更新正式 desktop profile；不改源码/素材/冻结包，不重启宿主，不跑 TTS/渲染。",
+  "model": {
+    "profileDefault": "deepseek-account / deepseek-flash（cordis.patch.yml 的 agent-default-model，安装前后未变）",
+    "installerSession": "agent-3 会话描述符 agentProvider=deepseek-account，agentModel=deepseek-flash（非仅 profile 默认值）",
+    "openaiUsed": false
+  },
+  "source": {
+    "release": "0.35.4-visual.5-quicktalk-formal-r2",
+    "sourceCommit": "0b88f25eca36191e9d7ed9408505b003542d6c01",
+    "sourceBase": "0b88f25eca36191e9d7ed9408505b003542d6c01",
+    "sourceDigest": "6f42ee1440dbe884402e8cf28f1f2eab10bcbf4a4d5a7673e412623b2ceed1de",
+    "artifactDigest": "80b2eccdba8adcfa30c3ee5df78c98f1c3281983dcc666e0b2afae41e0ef4914",
+    "r1NotInstalled": "r1 为 0.35.4-visual.5-quicktalk-formal-r1（sourceCommit be58b5cf91aa22f1ae39037234c1f9a3901537f9，sourceDigest ec6f59d9bf19aa40add8fb2720ebbfba0a9e14c0339e46c2a24d10c6d46736bc，artifactDigest d2037be4452241fa106d1ab275666600ff46aed88e13fa32ef6d1129ced60c69），只做过只读校验，未安装；r2 是 0.35.4-visual.5 的首次安装。"
+  },
+  "artifact": "/Users/vinson/Projects/local/aura-releases/0.35.4-visual.5-quicktalk-formal-r2/package",
+  "artifactVerification": {
+    "command": "node --experimental-vm-modules tools/verify-local-visual.mjs /Users/vinson/Projects/local/aura-releases/0.35.4-visual.5-quicktalk-formal-r2 0.35.4-visual.5",
+    "exitCode": 0,
+    "files": 61,
+    "checks": [
+      "full frozen and runtime tree hashes",
+      "exact isolated ws resolution",
+      "complete production import graph",
+      "local wrapper defaults/persisted false/invalid shape/preserved ASR and TTS"
+    ],
+    "digestsMatchGiven": true,
+    "r1ReadOnlyComparison": "r1 的 61 文件与摘要（ec6f59d9…36bc / d2037be4…60c9）单独校验通过，仅作对比保留；未安装。",
+    "bytesNote": "61 个 package 文件合计 22,782,032 字节；frozen-input 59 个文件合计 22,780,674 字节（与任务给的 22,780,674 一致）。两者差 1,358 字节：package 用 761 字节 wrapper 替换 frozen-input 的 27,144 字节 index.js，另新增 host-runtime.js 27,144 字节、local-visual-config.json 543 字节，package.json 多 54 字节，净值 +1,358。"
+  },
+  "snapshot": {
+    "path": "/Users/vinson/.dsh/backups/20261126-213331-aura-before-quicktalk-r2",
+    "size": "81M",
+    "createdAt": "2026-11-26T21:33:31+08:00",
+    "scope": "cordis.patch.yml cordis.yml manifest.txt package.json pnpm-lock.yaml pnpm-workspace.yaml sessions.tar.gz",
+    "command": "~/.local/bin/dsh-snapshot save aura-before-quicktalk-r2 --with-sessions",
+    "baseline": "安装前 .4（0.35.4-visual.4-quicktalk-formal-r1）状态"
+  },
+  "preInstall": {
+    "previousPackage": "/Users/vinson/Projects/local/aura-releases/0.35.4-visual.4-quicktalk-formal-r1/package",
+    "previousVersion": "0.35.4-visual.4",
+    "previousAuraVersionEndpoint": "GET http://127.0.0.1:56195/aura/version → 0.35.4-visual.4（HTTP 200）",
+    "previousSymlink": "node_modules/dsh-aura -> ../../../../Projects/local/aura-releases/0.35.4-visual.4-quicktalk-formal-r1/package",
+    "activeAuraTasks": "无（安装前无 quicktalk/latentsync/ffmpeg 渲染或收音进程；无进行中的真实收音/渲染任务）",
+    "tcp18765Observation": "2026-11-26T21:33:59+08:00 观察无监听（CLOSED），只记录不归因",
+    "headroom": "文件系统 40% 已用，约 529 GiB 可用"
+  },
+  "install": {
+    "tool": "plugin_manager（官方插件管理工具）",
+    "method": "remove_bundle(dsh-aura) → install_bundle(<r2 package 绝对路径>)；未手改软链、未手改 node_modules",
+    "target": "/Users/vinson/Projects/local/aura-releases/0.35.4-visual.5-quicktalk-formal-r2/package",
+    "remove": {
+      "applied": true,
+      "changed": true,
+      "warnings": [],
+      "logPath": "/Users/vinson/.dsh/profiles/desktop/.plugin-manager/logs/operation-OQSH70/pnpm.log"
+    },
+    "install": {
+      "applied": true,
+      "changed": true,
+      "warnings": [],
+      "installedVersion": "0.35.4-visual.5",
+      "logPath": "/Users/vinson/.dsh/profiles/desktop/.plugin-manager/logs/operation-Bn8Nfl/pnpm.log",
+      "pnpmExitCode": 0,
+      "note": "pnpm 输出含 peer dependency 提示与 Packages: -5，退出码 0；plugin_manager warnings 为空，仅供回溯，不作为失败。"
+    }
+  },
+  "postInstall": {
+    "profileDependency": "link:/Users/vinson/Projects/local/aura-releases/0.35.4-visual.5-quicktalk-formal-r2/package",
+    "symlink": "node_modules/dsh-aura -> ../../../../Projects/local/aura-releases/0.35.4-visual.5-quicktalk-formal-r2/package（由 plugin_manager 产生）",
+    "realpath": "/Users/vinson/Projects/local/aura-releases/0.35.4-visual.5-quicktalk-formal-r2/package",
+    "packageJsonVersion": "0.35.4-visual.5",
+    "installedTree": {
+      "files": 61,
+      "missing": 0,
+      "extra": 0,
+      "mismatched": 0,
+      "installedTreeDigest": "80b2eccdba8adcfa30c3ee5df78c98f1c3281983dcc666e0b2afae41e0ef4914",
+      "note": "安装树逐文件 SHA256 与 artifact.json 一致，聚合摘要等于 artifactDigest。"
+    },
+    "auraVersionEndpoint": {
+      "url": "GET http://127.0.0.1:56195/aura/version",
+      "status": 200,
+      "body": {
+        "version": "0.35.4-visual.5",
+        "origin": "http://127.0.0.1:56195"
+      }
+    },
+    "auraVisualConfig": {
+      "url": "GET http://127.0.0.1:56195/aura/visual/config",
+      "status": 401,
+      "body": {
+        "error": "Browser authentication required"
+      },
+      "auth": "端点要求 Host/Origin + 浏览器会话签名 Cookie；本会话无该 Cookie，未输出或落盘任何凭据。",
+      "diagEvidence": "~/.dsh/aura-diag.jsonl 2026-11-26T21:34:10+08:00 记录 v0.35.4-visual.5：visual_backend enabled=true provider=quicktalk（与端点同源的 visualOptions）",
+      "enabled": true,
+      "provider": "quicktalk",
+      "editable": "未直接实测；configEditor 插件活跃且 dsh-aura fiber entry 存在（与端点 editable 同一判定），不声称已实测 200 JSON。"
+    },
+    "client": {
+      "status": "已热加载并重新注册",
+      "evidence": "~/.dsh/aura-diag.jsonl 2026-11-26T21:34:10+08:00：v0.35.4-visual.5 visual_backend(enabled=true, provider=quicktalk) → factory → apply → registered(tabs/body/title/open=true) → instance_owned → character_support → run_watch(running=false)",
+      "instanceClose": "2026-11-26T21:34:38+08:00 该实例 instance_close(code=1006, wasClean=false)，之后无新注册；client inspect 查询 10s 超时（页面侧桥不可用）",
+      "refresh": "当前 Aura 页面未连接，需用户刷新/重开 Aura 页一次；未刷新、未重启宿主、未无限重试 client inspect",
+      "uiConclusion": "UI 由用户确认"
+    },
+    "mediaHashes": {
+      "checked": 5,
+      "matched": 5,
+      "files": [
+        "assets/runtime/short-hair/idle-lean.mp4",
+        "assets/runtime/short-hair/front-loop-background-matched.mp4",
+        "assets/runtime/short-hair/listen.mp4",
+        "assets/runtime/short-hair/side.png",
+        "assets/previews/短发直播测试/无声倾听/短发正面直视-参考帧.png"
+      ],
+      "note": "全部与 r2 artifact 哈希一致；未播放、未渲染。"
+    },
+    "poseFamily": {
+      "asset": "h3-lean",
+      "actual": "frontal-half",
+      "catalog": "assets/runtime/short-hair/catalog.json",
+      "roles": [
+        "idle-interaction",
+        "manual-interaction"
+      ],
+      "eligibility": "client.js 自动待机资格判定为 runtime.poseFamily === 'frontal-half'；恢复后保持自动待机池资格。",
+      "r2VsR1": "r1 为 three-quarter-half；r2 改为 frontal-half，未换视频。"
+    },
+    "route": {
+      "actual": [
+        "H3-俏皮探镜头原片（无额外转身拼接）"
+      ],
+      "review": "仅播放原始探镜头动作；与正面待机的姿态差异待用户验收，不插播旧转身视频",
+      "concatRefs": "包内无 return/turn 拼接代码引用；turn.mp4/return.mp4 仅作为 host-runtime 静态路由与 package.json files 列表登记，播放逻辑不使用。"
+    },
+    "idleLean": {
+      "sha256": "2506775a22671645df1fffa26309eb7a19b65565377e6cb4d06659b7473af8ff",
+      "durationSeconds": 6.583008,
+      "fps": "24/1",
+      "width": 768,
+      "height": 960,
+      "audioTracks": 0,
+      "probe": "ffprobe：仅 1 条 h264 视频流；无音轨；原始 H3 视频逐字节副本"
+    }
+  },
+  "quickTalkChannel": {
+    "observedBefore": "2026-11-26T21:33:59+08:00：127.0.0.1:18765 无监听（CLOSED）",
+    "observedAfter": "2026-11-26T21:35:58+08:00：127.0.0.1:18765 由 ssh（PID 77455）监听，另有 /Users/vinson/Library/Application Support/aura-quicktalk-tunnel/run-tunnel.sh（PID 77449）",
+    "attribution": "只记录观察到的事实，不归因；本任务未操作 SSH/隧道/launchd。",
+    "keepaliveNote": "并行任务 keepalive 记录中的 .4 是历史观察；本 profile 最终插件为 .5-r2，不把 .4 当作最终版本。",
+    "renderOrTts": "本轮未执行推理/TTS/渲染，未声称真实音画通过"
+  },
+  "threeStates": {
+    "installation": "完成（plugin_manager applied；profile 解析到 r2/package；package.json 版本 0.35.4-visual.5；/aura/version=0.35.4-visual.5）",
+    "realSingleTurnAudiovisual": "未验证（本轮未跑推理/TTS/渲染；18765 虽已监听，但不宣称真实单句音画通过）",
+    "userAcceptance": "进行中（用户已独立确认安装、/aura/version=.5、软链 r2、lean 原片 hash、route 仅原片、认证 health ready=true；真实单句音画与 UI 由用户继续确认）"
+  },
+  "rollback": "通过官方 plugin_manager 重新安装保留的 /Users/vinson/Projects/local/aura-releases/0.35.4-visual.4-quicktalk-formal-r1/package（或保留的 visual.3-r1），并可用快照 /Users/vinson/.dsh/backups/20261126-213331-aura-before-quicktalk-r2 还原 profile 清单；只重载 Aura，不重启整个 DSH。旧 .4 制品未删除。",
+  "deviations": [
+    "为安装新版本，按 plugin_manager 既有唯一路径先 remove_bundle 再 install_bundle。",
+    "pnpm 日志含 peer dependency 提示与 Packages: -5；退出码 0、plugin_manager warnings 为空，不作为失败。",
+    "/aura/visual/config 无浏览器会话 Cookie 返回 401；enabled/provider 改由 Host 自身 visual_backend 诊断行佐证，editable 未实测。",
+    "client 实例在注册后 close(1006)，当前页面未连接；未刷新页面、未重启宿主，UI 交由用户刷新确认。",
+    "18765 在安装前后状态变化仅作观察记录，不归因于本任务。",
+    "字节口径：package 61 文件 22,782,032 字节；frozen-input 59 文件 22,780,674 字节（后者与给定 22,780,674 一致）。"
+  ],
+  "records": {
+    "releaseRecord": "/Users/vinson/Projects/local/aura-releases/0.35.4-visual.5-quicktalk-formal-r2/deployment.json",
+    "repoRecord": "docs/deployments/20261126-quicktalk-formal-r1-r2.json（新文件）",
+    "preservedRecords": [
+      "docs/deployments/20261125-quicktalk-formal-r1.json",
+      "docs/deployments/20261126-quicktalk-formal-r1-install.json",
+      "docs/deployments/20261126-quicktalk-channel-restored.json"
+    ]
+  },
+  "noSourceOrMediaChanges": "本轮只部署与验证；未修改源码/视频/冻结 artifact；未 git commit/push；未重启宿主；未操作 SSH/隧道/launchd。"
+}

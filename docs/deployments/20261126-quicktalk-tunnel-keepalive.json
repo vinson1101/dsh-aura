@@ -1,0 +1,157 @@
+{
+  "deploymentId": "dsh-aura-quicktalk-tunnel-keepalive-20261126",
+  "recordedAt": "2026-11-26T21:35:52+08:00",
+  "environment": "macOS 公司电脑，用户级 launchd（gui/501）；DSH Desktop host PID 38467 未重启，Web GUI http://127.0.0.1:56195",
+  "status": "installed-and-verified-keepalive-running",
+  "上线版本": "不适用（本记录仅覆盖本机 SSH 通道保活；Aura 插件版本仍为 0.35.4-visual.4 formal-r1，未在本任务变更）",
+  "上线原因": "QuickTalk 专用本机 SSH 隧道 127.0.0.1:18765 无监听，Aura 预检 connection refused。需要用户级常驻保活与断线自动重连，使正式 Aura 能重新访问既有远端 QuickTalk。",
+  "authorization": "用户明确授权：先只读探测认证来源；允许从限定历史 user 消息一次性内存提取既有 SSH 凭据写入 macOS 登录钥匙串，永久脚本只读钥匙串，不打印/不落盘/不进代码、命令行、环境变量、日志或 Git；不改远端授权与权限；不重启远端 QuickTalk/vLLM。",
+  "scope": {
+    "changed": [
+      "本机用户级 LaunchAgent com.vinson.aura-quicktalk-tunnel（ssh 隧道 + KeepAlive）",
+      "运行时 askpass 助手与监督包装脚本（不含凭据）",
+      "登录钥匙串新增本用途 generic password 条目（ACL 信任 /usr/bin/security 与 /usr/bin/ssh）"
+    ],
+    "notChanged": [
+      "未安装/更新任何 DSH 插件；profile 未改；未做 profile snapshot（本轮无 profile 变更）",
+      "未修改素材、源码、冻结 artifact 或任何 release 目录内容",
+      "未重启 DSH、未重启/停止 vLLM 或远端 QuickTalk、未新增服务器模型",
+      "未修改远端 authorized_keys 或文件权限"
+    ]
+  },
+  "authentication": {
+    "sourceType": "macOS login Keychain generic password（一次性从用户已授权的限定历史 user 消息在内存提取并写入；提取脚本用后即删）",
+    "service": "aura-quicktalk-ssh",
+    "account": "ubuntuli",
+    "keychain": "/Users/vinson/Library/Keychains/login.keychain-db",
+    "itemCreatedAt": "2026-11-26T21:33:50+08:00",
+    "aclTrustedApplications": [
+      "/usr/bin/security",
+      "/usr/bin/ssh"
+    ],
+    "aclWriteMethod": "Security.framework SecAccessCreate + SecTrustedApplicationCreateFromPath + SecKeychainItemCreateFromContent（ctypes，仅内存参数）",
+    "nonInteractiveRead": "通过 /usr/bin/security find-generic-password -s aura-quicktalk-ssh -a ubuntuli -w 读回校验成功，无 GUI 授权弹窗",
+    "readPathAtRuntime": "run-tunnel.sh -> SSH_ASKPASS=askpass.sh, SSH_ASKPASS_REQUIRE=force -> askpass.sh exec /usr/bin/security find-generic-password -w",
+    "credentialNeverStoredIn": [
+      "源码/脚本",
+      "plist",
+      "命令行参数",
+      "环境变量持久化",
+      "日志",
+      "Git",
+      "临时明文文件"
+    ],
+    "historyFileNote": "限定历史会话文件为既有状态、本任务未修改；运行时不再读取它。"
+  },
+  "files": {
+    "plist": "/Users/vinson/Library/LaunchAgents/com.vinson.aura-quicktalk-tunnel.plist",
+    "askpass": "/Users/vinson/Library/Application Support/aura-quicktalk-tunnel/askpass.sh",
+    "wrapper": "/Users/vinson/Library/Application Support/aura-quicktalk-tunnel/run-tunnel.sh",
+    "tunnelLog": "/Users/vinson/Library/Logs/aura-quicktalk-tunnel.log",
+    "launchdStdout": "/Users/vinson/Library/Logs/aura-quicktalk-tunnel.launchd.out.log",
+    "launchdStderr": "/Users/vinson/Library/Logs/aura-quicktalk-tunnel.launchd.err.log"
+  },
+  "tunnel": {
+    "localListen": "127.0.0.1:18765",
+    "forwardTo": "远端 127.0.0.1:18765",
+    "sshTarget": "ubuntuli@192.168.1.132",
+    "hostKey": "known_hosts 已有 192.168.1.132 ssh-ed25519 条目；StrictHostKeyChecking=yes 固定校验",
+    "sshOptions": [
+      "-N",
+      "ExitOnForwardFailure=yes",
+      "ServerAliveInterval=15",
+      "ServerAliveCountMax=3",
+      "ConnectTimeout=10",
+      "PreferredAuthentications=password",
+      "PubkeyAuthentication=no",
+      "NumberOfPasswordPrompts=1",
+      "StrictHostKeyChecking=yes",
+      "LogLevel=ERROR"
+    ],
+    "launchd": {
+      "label": "com.vinson.aura-quicktalk-tunnel",
+      "domain": "gui/501",
+      "RunAtLoad": true,
+      "KeepAlive": true,
+      "ThrottleInterval": 10
+    }
+  },
+  "verification": {
+    "initialStart": {
+      "bootstrapAt": "2026-11-26T21:34:23+08:00",
+      "wrapperFirstStart": "2026-11-26T21:34:24+08:00 (pid 76843)",
+      "listenerUpAt": "2026-11-26T21:34:34+08:00",
+      "note": "首次 spawn 约 11 秒（钥匙串读取 + SSH 握手），后续重启约 3–5 秒"
+    },
+    "listenerEvidence": "lsof -nP -iTCP:18765 -sTCP:LISTEN -> ssh pid 77455 LISTEN 127.0.0.1:18765；包装进程 77449 常驻（父进程 1，launchd 托管）",
+    "authenticatedHealth": {
+      "endpoint": "GET http://127.0.0.1:18765/health（Authorization: Bearer <private.env 的 QUICKTALK_TOKEN，仅在进程内使用>）",
+      "httpStatus": 200,
+      "latencyMs": 158.4,
+      "ready": true,
+      "version": "quicktalk-v3",
+      "parts": true,
+      "cpuThreads": 8,
+      "engineSha256": "3c212e7aeff887200d5cd9e598dff2524cbdf7d870de0cc26972e7bdb878a645",
+      "sourceSha256": "620d5586a80d6507a996eae9913933b103d3154ebbb49ecef90ecf839ea7e97f",
+      "matchesPriorChannelRestoredRecord": true
+    },
+    "recoveryTests": [
+      {
+        "method": "终止 ssh 子进程（SIGKILL，未动远端）",
+        "eventAt": "2026-11-26T21:34:45.362+08:00",
+        "listenerDownAt": "2026-11-26T21:34:45.440+08:00",
+        "listenerUpAt": "2026-11-26T21:34:49.889+08:00",
+        "recoverySeconds": 4.5,
+        "postRecoveryHealth": "HTTP 200 ready=true version=quicktalk-v3 parts=true"
+      },
+      {
+        "method": "launchctl kickstart -k gui/501/com.vinson.aura-quicktalk-tunnel",
+        "eventAt": "2026-11-26T21:34:53.929+08:00",
+        "listenerDownAt": "2026-11-26T21:34:55.983+08:00",
+        "listenerUpAt": "2026-11-26T21:34:59.112+08:00",
+        "recoverySeconds": 3.2,
+        "postRecoveryHealth": "HTTP 200 ready=true version=quicktalk-v3"
+      },
+      {
+        "method": "bootout + bootstrap 冷启动（模拟重新登录/RunAtLoad）",
+        "eventAt": "2026-11-26T21:35:21.251+08:00",
+        "listenerUpAt": "2026-11-26T21:35:25.251+08:00",
+        "recoverySeconds": 3.9,
+        "postRecoveryHealth": "HTTP 200 ready=true version=quicktalk-v3",
+        "launchctlState": "running, pid 77449, last exit code = (never exited)"
+      }
+    ],
+    "logTimeline": [
+      "2026-11-26T21:34:24 start pid=76843",
+      "2026-11-26T21:34:45 exit code=137",
+      "2026-11-26T21:34:45 start pid=77046",
+      "2026-11-26T21:34:55 start pid=77175",
+      "2026-11-26T21:35:21 start pid=77449"
+    ],
+    "logContent": "仅时间戳、pid、退出码；ssh 以 LogLevel=ERROR 运行，日志无私钥/口令/令牌。launchd stderr 日志在 SIGKILL 时出现 shell 的 'Killed: 9' 作业消息（命令行不含凭据）"
+  },
+  "remoteIndependence": "远端 QuickTalk 与 vLLM 均为用户管理服务。本任务未重启、停止或修改它们；远端进程/端口/许可证状态需用户独立核对。",
+  "knownLimitations": [
+    "运行时依赖登录钥匙串已解锁；若开机时钥匙串尚未解锁，launchd 每 10 秒重试，解锁后自动恢复。",
+    "若钥匙串条目被删除/密码轮换，包装脚本会以 exit 255 退出并持续重试，日志可见；恢复需重新写入钥匙串条目。",
+    "StrictHostKeyChecking=yes 固定已信任的主机公钥；远端更换 host key 会主动失败（安全优先，不静默接受）。",
+    "18765 被其它进程占用时 ExitOnForwardFailure=yes 会让本次 ssh 退出，KeepAlive 重试但不会杀掉占用进程；若出现冲突需人工处理，本任务不杀他人进程。",
+    "ThrottleInterval=10 意味着极端网络故障时最短重试间隔约 10 秒，不是实时。",
+    "本记录只证明通道与认证健康，不等同于真实音画/TTS 验收；真实单句仍需后续功能验收。"
+  ],
+  "rollback": {
+    "steps": [
+      "launchctl bootout gui/501/com.vinson.aura-quicktalk-tunnel",
+      "rm ~/Library/LaunchAgents/com.vinson.aura-quicktalk-tunnel.plist",
+      "可选：security delete-generic-password -s aura-quicktalk-ssh -a ubuntuli（仅在不再需要该通道凭据时）",
+      "可选：rm -rf '~/Library/Application Support/aura-quicktalk-tunnel' 与 ~/Library/Logs/aura-quicktalk-tunnel*.log"
+    ],
+    "effect": "仅移除本机隧道保活，不影响 Aura 插件、profile、远端服务或既有记录。"
+  },
+  "supersedes": "不改写 20261126-quicktalk-formal-r1-install.json 与 20261126-quicktalk-channel-restored.json；本记录只新增常驻保活层。",
+  "pending": [
+    "冻结的 .5 正式包部署由另一任务按 deployment.md gate 执行；本记录不包含 .5 安装。",
+    "真实单句音画与用户验收仍待后续。"
+  ]
+}
