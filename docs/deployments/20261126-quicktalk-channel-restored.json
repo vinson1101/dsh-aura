@@ -1,0 +1,38 @@
+{
+  "recordedAt": "2026-11-26T16:25:18.578694+08:00",
+  "status": "installed-and-channel-restored-user-test-pending",
+  "installationRecord": "20261126-quicktalk-formal-r1-install.json",
+  "sourceCommit": "1197386272b881f0faf5431f3bbd1281ba25afb8",
+  "version": "0.35.4-visual.4",
+  "verification": {
+    "desktopVersionEndpoint": "0.35.4-visual.4",
+    "dispatchAndInstallerActualModel": "deepseek-account/deepseek-flash",
+    "authenticatedHealth": {
+      "ready": true,
+      "version": "quicktalk-v3",
+      "parts": true,
+      "cpuThreads": 8,
+      "engineSha256": "3c212e7aeff887200d5cd9e598dff2524cbdf7d870de0cc26972e7bdb878a645",
+      "sourceSha256": "620d5586a80d6507a996eae9913933b103d3154ebbb49ecef90ecf839ea7e97f"
+    },
+    "remoteServerScriptSha256": "f01d757e9d9807d34732623318590e925287442c126790e8b71d6115d746c9df",
+    "matchesPriorR5": true,
+    "quickTalkPid": 278986,
+    "vllmPid": 1439740
+  },
+  "changes": [
+    "Restored dedicated SSH loopback forwarding 127.0.0.1:18765 to existing remote 127.0.0.1:18765 using prior user-authorized authentication"
+  ],
+  "noServiceRestart": true,
+  "gpuObservation": {
+    "freeMiB": 162,
+    "quickTalkResidentMiB": 1372,
+    "vllmMiB": 30602
+  },
+  "remaining": [
+    "No new TTS/render performed; real single-turn playback and user acceptance pending",
+    "Native UI visual inspection pending; refresh Aura page if old state remains"
+  ],
+  "supersedes": "Installation record channel CLOSED observation; historical installation record retained",
+  "rollback": "Stop only the dedicated forwarding process if needed; plugin rollback remains installation record procedure."
+}
