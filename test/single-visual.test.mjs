@@ -290,10 +290,11 @@ await test('full pane single-task completion renders once, uses native task id/f
   await f.emit('assistant/live-chunk', { turn: 1, chunk: { type: 'text-delta', text: '已经派发任务。' } });
   await final(f, '已经派发任务。');
   await f.setRunning(false); await f.wait(300);
-  assert.equal(f.post().length, 0, 'dispatch acknowledgement incurs no TTS or render');
+  assert.deepEqual(f.post().map(call => JSON.parse(call.init.body).text), ['已经派发任务。']);
+  await speakEnd(f);
   await summary(f, { taskId: 'native-child' }); await f.wait(200);
-  assert.equal(f.post().length, 1);
-  const payload = JSON.parse(f.post()[0].init.body);
+  assert.equal(f.post().length, 2);
+  const payload = JSON.parse(f.post()[1].init.body);
   assert.equal(payload.taskId, 'native-child'); assert.equal(payload.voice, 'longwan_v3'); assert.equal(payload.model, 'cosyvoice-v3-flash');
   const video = f.container.querySelector('[data-aura-reply-player]');
   assert.equal(video.getAttribute('src'), '/aura/visual/media?id=current-job&ticket=cap');
@@ -304,7 +305,7 @@ await test('full pane single-task completion renders once, uses native task id/f
   await f.run(() => video.onended());
   assert.equal(f.container.querySelector('[data-aura-state]').dataset.auraState, 'idle');
   assert.ok(f.calls.some(c => c.init.method === 'DELETE'), 'finished answer capability revoked');
-  await summary(f); await f.wait(200); assert.equal(f.post().length, 1, 'completion duplicate is not expensive inference twice');
+  await summary(f); await f.wait(200); assert.equal(f.post().length, 2, 'completion duplicate is not expensive inference twice');
   assert.ok(!f.calls.some(c => c.url === '/aura/tts'));
 });
 
@@ -321,7 +322,7 @@ await test('ordinary single response buffers ALL streamed sentences until comple
   assert.equal(f.post().length, 1, 'late completion cannot duplicate normal answer');
 });
 
-await test('fast completion before foreground ends/receipt arrives owns reply once and never leaves phantom pending task', async t => {
+await test('fast completion before foreground ends/receipt arrives follows the confirmation once and never leaves phantom pending task', async t => {
   const f = await mountPane(); t.after(f.unmount); await f.send(); await f.setRunning(true);
   await f.emit('tool/call', { turn: 1, callId: 'fast', name: 'aura_task', arguments: '{}' });
   await summary(f, { taskId: 'fast-child', key: 'parent:1', turn: 1 });
@@ -329,11 +330,16 @@ await test('fast completion before foreground ends/receipt arrives owns reply on
   await final(f, '已经派发，请稍等。');
   await f.wait(180); assert.equal(f.post().length, 0);
   await f.setRunning(false); await f.wait(200);
-  assert.equal(f.post().length, 1); assert.equal(JSON.parse(f.post()[0].init.body).taskId, 'fast-child');
-  assert.equal(JSON.parse(f.post()[0].init.body).text, '当前任务已经完成，这是实际结果。');
+  assert.deepEqual(f.post().map(call => JSON.parse(call.init.body).text), ['已经派发，请稍等。']);
+  const video = f.container.querySelector('[data-aura-reply-player]');
+  await f.run(() => { video.oncanplaythrough(); video.onplaying(); }); await f.wait(200);
+  assert.equal(f.post().length, 1, 'queued result does not interrupt a playing acknowledgement');
+  await f.run(() => video.onended()); await f.wait(200);
+  assert.equal(f.post().length, 2); assert.equal(JSON.parse(f.post()[1].init.body).taskId, 'fast-child');
+  assert.equal(JSON.parse(f.post()[1].init.body).text, '当前任务已经完成，这是实际结果。');
   await speakEnd(f); assert.equal(f.container.querySelector('[data-aura-state]').dataset.auraState, 'idle');
   await summary(f, { taskId: 'fast-child', key: 'parent:1-duplicate', turn: 1 }); await f.wait(200);
-  assert.equal(f.post().length, 1, 'same turn with another key is not rendered twice');
+  assert.equal(f.post().length, 2, 'same turn with another key is not rendered twice');
 });
 
 await test('no-stream final snapshot fallback reads actual current reply once, never historical previous response', async t => {
@@ -544,21 +550,22 @@ await test('multi-child summary settles all attributed children, ignores late re
   }
   await receipt('child-A'); await receipt('child-C');
   await final(f, '三个任务已派发。'); await f.setRunning(false); await f.wait(200);
-  assert.equal(f.post().length, 0, 'multi dispatch acknowledgement never renders');
+  assert.deepEqual(f.post().map(call => JSON.parse(call.init.body).text), ['三个任务已派发。']);
+  await speakEnd(f);
   await summary(f, { key: 'parent:2', turn: 2, taskIds: ['child-A', 'child-B', 'child-A'] }); await f.wait(200);
-  assert.equal(f.post().length, 1);
-  assert.equal(JSON.parse(f.post()[0].init.body).taskId, 'parent:2', 'merged answer uses stable summary key, not arbitrary pending child');
+  assert.equal(f.post().length, 2);
+  assert.equal(JSON.parse(f.post()[1].init.body).taskId, 'parent:2', 'merged answer uses stable summary key, not arbitrary pending child');
   await receipt('child-B'); // Receipt arrives AFTER a summary already settled B.
   await speakEnd(f);
   assert.equal(state(), 'waiting', 'unrelated child C still blocks idle');
   await summary(f, { key: 'parent:3', turn: 3 }); await f.wait(200);
-  assert.equal(f.post().length, 2);
-  assert.equal(JSON.parse(f.post()[1].init.body).taskId, 'parent:3');
+  assert.equal(f.post().length, 3);
+  assert.equal(JSON.parse(f.post()[2].init.body).taskId, 'parent:3');
   await speakEnd(f);
   assert.equal(state(), 'waiting', 'unattributed summary cannot guess or clear unrelated child C');
   await summary(f, { key: 'parent:4', turn: 4, taskIds: ['child-C'] }); await f.wait(200);
-  assert.equal(f.post().length, 3);
-  assert.equal(JSON.parse(f.post()[2].init.body).taskId, 'child-C', 'single child in taskIds retains native identity');
+  assert.equal(f.post().length, 4);
+  assert.equal(JSON.parse(f.post()[3].init.body).taskId, 'child-C', 'single child in taskIds retains native identity');
   await speakEnd(f);
   assert.equal(state(), 'idle', 'all matched children settled, with no phantom pending A/B from late receipt');
 });
@@ -592,7 +599,7 @@ await test('single-character local preflight gives actionable Chinese settings h
   }
 });
 
-await test('accepted task keeps same-turn mixed-dispatch acknowledgement silent in either receipt order', async () => {
+await test('mixed dispatch confirms once in either receipt order and reports the result independently', async () => {
   for (const rejectedFirst of [false, true]) {
     const f = await mountPane();
     try {
@@ -604,10 +611,11 @@ await test('accepted task keeps same-turn mixed-dispatch acknowledgement silent 
         content: [{ type: 'text', text: '{"error":"另一个任务无法启动"}' }] } });
       if (rejectedFirst) { await rejected(); await accepted(); } else { await accepted(); await rejected(); }
       await final(f, '一个任务已派发，另一个启动失败。'); await f.setRunning(false); await f.wait(240);
-      assert.equal(f.post().length, 0, 'acknowledgement is not rendered while an accepted task runs');
+      assert.deepEqual(f.post().map(call => JSON.parse(call.init.body).text), ['一个任务已派发，另一个启动失败。']);
+      await speakEnd(f);
       assert.equal(f.container.querySelector('[data-aura-state]').dataset.auraState, 'waiting');
       await summary(f, { taskIds: ['mixed-child'] }); await f.wait(200);
-      assert.equal(f.post().length, 1); assert.equal(JSON.parse(f.post()[0].init.body).taskId, 'mixed-child');
+      assert.equal(f.post().length, 2); assert.equal(JSON.parse(f.post()[1].init.body).taskId, 'mixed-child');
       await speakEnd(f); assert.equal(f.container.querySelector('[data-aura-state]').dataset.auraState, 'idle');
     } finally { await f.unmount(); }
   }
@@ -620,4 +628,29 @@ await test('rejected task dispatch speaks the actual final failure instead of su
   await final(f, '任务未能启动。'); await f.setRunning(false); await f.wait(160);
   assert.equal(f.post().length, 1); assert.equal(JSON.parse(f.post()[0].init.body).text, '任务未能启动。');
   await speakEnd(f); assert.equal(f.container.querySelector('[data-aura-state]').dataset.auraState, 'idle');
+});
+
+await test('accepted tool step speaks only durable user-facing confirmation and deduplicates identical summary', async t => {
+  const f = await mountPane(); t.after(f.unmount);
+  await f.send(); await f.setRunning(true);
+  await f.emit('assistant/live-chunk', { turn: 1, chunk: { type: 'text-delta', text: '未定稿的文字。' } });
+  await f.emit('assistant/message', { turn: 1, message: { content: [
+    { type: 'reasoning', text: '内部草稿。' },
+    { type: 'text', text: '我请助手核对这件事。' },
+    { type: 'tool-call', id: 'checked', name: 'aura_task', arguments: '{"label":"内部标签"}' },
+  ] } });
+  await f.emit('tool/call', { turn: 1, callId: 'checked', name: 'aura_task', arguments: '{}' });
+  await f.emit('tool/result', { turn: 1, message: { toolCallId: 'checked',
+    content: [{ type: 'text', text: '{"status":"dispatched","sessionId":"child","label":"内部标签"}' }] } });
+  await f.emit('assistant/message', { turn: 1, message: { content: [
+    { type: 'text', text: '不可播报的后续工具说明。' },
+    { type: 'tool-call', id: 'other', name: 'internal_tool', arguments: '{}' },
+  ] } });
+  await f.setRunning(false); await f.wait(200);
+  assert.deepEqual(f.post().map(call => JSON.parse(call.init.body).text), ['我请助手核对这件事。']);
+  await speakEnd(f);
+  await summary(f, { turn: 1, taskId: 'child', text: '我请助手核对这件事。' });
+  await f.wait(200);
+  assert.equal(f.post().length, 1);
+  assert.ok(!f.calls.some(c => c.url === '/aura/tts'));
 });

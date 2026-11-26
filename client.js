@@ -17,7 +17,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     // Each replacement needs its own scope. A top-level const breaks the next
     // classic-script load with a global lexical redeclaration error.
-    const AURA_VERSION = '0.35.4-visual.5';
+    const AURA_VERSION = '0.35.4-visual.6';
     diag('factory');
     /* A reload replaces this module but not the running audio graph: stop the
      * capture the previous instance left holding the microphone. */
@@ -700,7 +700,7 @@ registerProcessor('aura-capture', AuraCapture);`;
     }
 
     /** The most recent assistant message text in this session, or ''. */
-    function lastAssistantText(sessionId, withEvent = false) {
+    function lastAssistantText(sessionId, withEvent = false, acceptedDispatchCalls) {
       const sessions = services && services.get ? services.get('sessions') : null;
       if (!sessions || typeof sessions.binding !== 'function' || !sessionId) return '';
       const binding = sessions.binding(sessionId);
@@ -712,6 +712,14 @@ registerProcessor('aura-capture', AuraCapture);`;
         if (!event || event.type !== 'assistant/message') continue;
         const message = event.data && event.data.message;
         const blocks = (message && message.content) || [];
+        if (acceptedDispatchCalls) {
+          if (event.data?.interrupted) continue;
+          const calls = blocks.filter(block => block?.type === 'tool-call');
+          // A durable Aura dispatch confirmation can share a message with the tool call.
+          if (calls.length && (!Number.isInteger(event.data?.turn)
+            || !calls.every(block => block.name === 'aura_task')
+            || !calls.some(block => acceptedDispatchCalls.get(block.id) === event.data.turn))) continue;
+        }
         const text = blocks
           .filter((block) => block && block.type === 'text' && typeof block.text === 'string')
           .map((block) => block.text)
@@ -1382,6 +1390,7 @@ registerProcessor('aura-capture', AuraCapture);`;
       React.useEffect(() => {
         let disposed = false, serial = 0, kind = '', idleTimer = 0, loadTimer = 0;
         let assetAbort = null, frameCallback = 0, downloadTimer = 0;
+        let returnTimer = 0, fadeTimer = 0, fading = null;
         let playCurrent = null, watchReadiness = null, playSerial = 0;
         let answer = null, lastStage = desired.current, activated = false;
         let lastIdle = '', lastWave = -Infinity;
@@ -1407,6 +1416,9 @@ registerProcessor('aura-capture', AuraCapture);`;
           if (urls.has(target)) { URL.revokeObjectURL(urls.get(target)); urls.delete(target); }
         };
         const stopPending = () => {
+          window.clearTimeout(returnTimer); returnTimer = 0;
+          window.clearTimeout(fadeTimer); fadeTimer = 0;
+          if (fading) { fading.style.transition = ''; resetMedia(fading); fading = null; }
           window.clearTimeout(loadTimer); window.clearTimeout(downloadTimer);
           downloadTimer = 0; playCurrent = null; watchReadiness = null;
           assetAbort?.abort(); assetAbort = null;
@@ -1470,7 +1482,7 @@ registerProcessor('aura-capture', AuraCapture);`;
           node.dataset.auraAudio = 'quiet';
           armIdle();
         };
-        const show = (next, reply = null, manual = false) => {
+        const show = (next, reply = null, manual = false, fadeReply = false) => {
           if (disposed) return;
           clearIdle();
           const ticket = ++serial;
@@ -1546,7 +1558,17 @@ registerProcessor('aura-capture', AuraCapture);`;
             visible = video;
             if (previous && previous !== video) {
               if (previous === standby) { previous.pause(); previous.style.opacity = '0'; }
-              else resetMedia(previous);
+              else if (previous === replyVideo && next === 'front' && fadeReply) {
+                // Retain the final decoded answer frame until the moving front is ready.
+                fading = previous; previous.muted = true; previous.pause();
+                previous.style.transition = 'opacity 320ms ease-out';
+                previous.style.opacity = '0';
+                fadeTimer = window.setTimeout(() => {
+                  fadeTimer = 0;
+                  if (fading !== previous) return;
+                  previous.style.transition = ''; resetMedia(previous); fading = null;
+                }, 320);
+              } else resetMedia(previous);
             }
             video.style.opacity = '1';
             image.style.visibility = 'hidden';
@@ -1602,7 +1624,14 @@ registerProcessor('aura-capture', AuraCapture);`;
           };
           video.onended = () => {
             if (!current()) return;
-            if (next === 'answer') { finishAnswer(); show('front'); }
+            if (next === 'answer') {
+              video.muted = true; node.dataset.auraAudio = 'quiet';
+              finishAnswer();
+              returnTimer = window.setTimeout(() => {
+                returnTimer = 0;
+                if (current()) show('front', null, false, true);
+              }, 500);
+            }
             else if (interaction) show('front');
           };
           video.onerror = fail;
@@ -1857,10 +1886,10 @@ registerProcessor('aura-capture', AuraCapture);`;
       const visualBusy = React.useRef(false);
       const pendingTaskIds = React.useRef(new Set());
       const [pendingTaskCount, setPendingTaskCount] = React.useState(0);
-      const dispatchedTurns = React.useRef(new Set());
-      const summaryTurns = React.useRef(new Set());
+      const acceptedDispatchCalls = React.useRef(new Map());
+      const summaryTurns = React.useRef(new Map());
       const completedTaskIds = React.useRef(new Set());
-      const singleSpokenTurns = React.useRef(new Set());
+      const foregroundSpeech = React.useRef(new Map());
       const singleCharacterMode = () => prefsRef.current.character && modeRef.current === 'talk';
       React.useEffect(() => {
         if (!visualStatus || visualStatus.state !== 'preparing') return;
@@ -2515,17 +2544,17 @@ registerProcessor('aura-capture', AuraCapture);`;
           // summary key. Never guess a child from unrelated pending work.
           const taskId = taskIds.length === 1 ? taskIds[0] : message.key;
           if (single) {
-            summaryTurns.current.add(message.turn);
             for (const id of taskIds) { pendingTaskIds.current.delete(id); completedTaskIds.current.add(id); }
             setPendingTaskCount(pendingTaskIds.current.size);
           }
-          // Single mode suppresses dispatch acknowledgement, not execution or
-          // completion. A fast completion can arrive before its foreground ends.
-          if ((single && singleSpokenTurns.current.has(message.turn)) || !taskSpeechEnabled.current || (!single && speakNext.current) || message.turn <= silencedThrough.current
+          if ((single && summaryTurns.current.has(message.turn)) || !taskSpeechEnabled.current || (!single && speakNext.current) || message.turn <= silencedThrough.current
             || (!single && coveredTurns.current.has(message.turn)) || speechGagged()) return;
           const text = single ? speechText(message.text) : speechText(message.text).slice(0, 360);
           if (!text) return;
-          if (single) singleSpokenTurns.current.add(message.turn);
+          if (single) {
+            summaryTurns.current.set(message.turn, text);
+            if (summaryTurns.current.size > 256) summaryTurns.current.delete(summaryTurns.current.keys().next().value);
+          }
           taskSummaries.current.push({ ...message, taskId, text, generation: speakGeneration.current, at: Date.now() });
           taskSummaries.current = taskSummaries.current.slice(-8);
         });
@@ -2537,6 +2566,7 @@ registerProcessor('aura-capture', AuraCapture);`;
             || visualBusy.current || pendingCapture.current || Date.now() - partialRef.current.at < 1500) return;
           const next = taskSummaries.current.shift();
           if (!next || next.generation !== speakGeneration.current
+            || (singleCharacterMode() && foregroundSpeech.current.get(next.turn) === next.text)
             || (!singleCharacterMode() && (Date.now() - next.at > 30000 || coveredTurns.current.has(next.turn))) || speechGagged()) return;
           void speak(next.text, undefined, next.taskId);
         }, 150);
@@ -2588,7 +2618,7 @@ registerProcessor('aura-capture', AuraCapture);`;
         if (!source || typeof source.subscribe !== 'function') return undefined;
 
         let seen = 0, toolSeen = 0;
-        const taskCalls = new Map(), acceptedDispatchTurns = new Set();
+        const taskCalls = new Map();
         for (const entry of source.getSnapshot?.().entries || []) {
           if (entry.event?.type === 'tool/call' || entry.event?.type === 'tool/result') toolSeen = Math.max(toolSeen, entry.event.seq || 0);
           if (entry.event?.type === 'assistant/live-chunk') seen = Math.max(seen, entry.event.seq || 0);
@@ -2606,26 +2636,20 @@ registerProcessor('aura-capture', AuraCapture);`;
             if (event && event.seq > toolSeen && (event.type === 'tool/call' || event.type === 'tool/result')) {
               if (event.type === 'tool/call' && event.data.name === 'aura_task') {
                 taskCalls.set(event.data.callId, event.data.turn);
-                dispatchedTurns.current.add(event.data.turn);
               }
               if (event.type === 'tool/result' && taskCalls.has(event.data.message?.toolCallId)) {
-                const dispatchTurn = taskCalls.get(event.data.message.toolCallId);
-                taskCalls.delete(event.data.message.toolCallId);
-                let accepted = false;
+                const callId = event.data.message.toolCallId;
+                const dispatchTurn = taskCalls.get(callId);
+                taskCalls.delete(callId);
                 try {
                   const receipt = JSON.parse(event.data.message.content.filter(b => b.type === 'text').map(b => b.text).join('\n'));
                   if (receipt.status === 'dispatched' && typeof receipt.sessionId === 'string') {
-                    accepted = true;
-                    acceptedDispatchTurns.add(dispatchTurn);
+                    acceptedDispatchCalls.current.set(callId, dispatchTurn);
+                    if (acceptedDispatchCalls.current.size > 256) acceptedDispatchCalls.current.delete(acceptedDispatchCalls.current.keys().next().value);
                     if (!completedTaskIds.current.has(receipt.sessionId)) pendingTaskIds.current.add(receipt.sessionId);
                     setPendingTaskCount(pendingTaskIds.current.size);
                   }
                 } catch { /* Not a dispatch receipt: never invent a native task id. */ }
-                // Only an entirely rejected turn may speak its final failure.
-                // Another call in the same turn can still be pending or accepted.
-                if (!accepted && !acceptedDispatchTurns.has(dispatchTurn) && ![...taskCalls.values()].includes(dispatchTurn)) {
-                  dispatchedTurns.current.delete(dispatchTurn);
-                }
               }
               toolSeen = Math.max(toolSeen, event.seq);
             }
@@ -2672,13 +2696,6 @@ registerProcessor('aura-capture', AuraCapture);`;
             return;
           }
           if (speakNext.current) {
-            const latestTurn = observedTurn.current;
-            if (singleCharacterMode() && (dispatchedTurns.current.has(latestTurn) || summaryTurns.current.has(latestTurn))) {
-              armSpeak(false); speechBuffer.current = ''; spokeAny.current = false;
-              setSingleStage(pendingTaskIds.current.size ? 'waiting' : 'idle');
-              wasRunning.current = running;
-              return;
-            }
             coverCurrentTurn();
             armSpeak(false);
             /* Whatever the stream left unfinished is the last sentence. */
@@ -2687,7 +2704,6 @@ registerProcessor('aura-capture', AuraCapture);`;
             const tail = singleCharacterMode() ? '' : speechBuffer.current.trim();
             speechBuffer.current = '';
             if (tail) {
-              if (singleCharacterMode()) singleSpokenTurns.current.add(observedTurn.current);
               spokeAny.current = true;
               void speak(tail);
             }
@@ -2710,11 +2726,9 @@ registerProcessor('aura-capture', AuraCapture);`;
             const take = () => {
               if (runSeqRef.current !== watchedRun || speakGeneration.current !== watchedGeneration) return;
               if (!props.access.active() || speechGagged()) { pendingFallback.current = false; return; }
-              if (singleCharacterMode() && (summaryTurns.current.has(observedTurn.current) || dispatchedTurns.current.has(observedTurn.current))) {
-                pendingFallback.current = false; return;
-              }
-              const completed = singleCharacterMode() ? lastAssistantText(watched, true) : null;
-              const text = completed ? completed.text : lastAssistantText(watched);
+              const single = singleCharacterMode();
+              const completed = single ? lastAssistantText(watched, true, acceptedDispatchCalls.current) : null;
+              const text = single ? (completed?.text || '') : lastAssistantText(watched);
               const fresh = Boolean(text) && (completed && Number.isInteger(completed.event.seq)
                 ? completed.event.seq > baselineSeq : text !== baseline);
               diag('reply_ready', { chars: text.length, fresh, attempt: attempts });
@@ -2722,7 +2736,16 @@ registerProcessor('aura-capture', AuraCapture);`;
                 coverCurrentTurn();
                 pendingFallback.current = false;
                 replyBefore.current = text;
-                if (singleCharacterMode()) singleSpokenTurns.current.add(observedTurn.current);
+                if (single) {
+                  const turn = completed.event.data.turn;
+                  const summary = summaryTurns.current.get(turn);
+                  const spoken = speechText(text);
+                  if (spoken) {
+                    if (summary && (summary === spoken || ![...acceptedDispatchCalls.current.values()].includes(turn))) return;
+                    foregroundSpeech.current.set(turn, spoken);
+                    if (foregroundSpeech.current.size > 256) foregroundSpeech.current.delete(foregroundSpeech.current.keys().next().value);
+                  }
+                }
                 void speak(text);
                 return;
               }

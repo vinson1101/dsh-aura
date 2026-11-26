@@ -241,9 +241,31 @@ await test('current reply is one unmuted muxed AV clock; actual playing/ended go
   await f.replyEvent('playing'); await f.replyEvent('ended'); await answer;
   assert.equal(ended, 1); assert.equal(f.reply.style.opacity, '1'); assert.equal(f.reply.muted, true);
   assert.equal(f.video.getAttribute('src'), '/aura/character/front.mp4');
-  await f.render('idle'); await f.ready();
+  await f.render('idle');
+  await f.advance(499);
+  assert.equal(f.node.dataset.auraClip, 'answer', 'retain answer tail briefly instead of cutting to portrait');
+  assert.equal(f.node.querySelector('img').style.visibility, 'hidden');
+  await f.advance(1); await f.ready();
+  assert.equal(f.reply.style.transition, 'opacity 320ms ease-out');
+  assert.ok(f.reply.getAttribute('src'), 'keep decoded frame during the fade');
+  await f.advance(320);
   assert.equal(f.reply.getAttribute('src'), null);
   assert.equal(f.node.dataset.auraClip, 'front');
+});
+
+await test('a new answer interrupts the return delay and cannot be erased by an old fade timer', async t => {
+  const f = await mount(); t.after(f.unmount); await frontal(f, 'prepare');
+  const first = f.control.current.playReply({ sessionId: 'session-one', mediaUrl: '/aura/visual/media?id=first' });
+  await f.replyEvent('canplaythrough'); await f.replyEvent('playing'); await f.replyEvent('ended'); await first;
+  const second = f.control.current.playReply({ sessionId: 'session-one', mediaUrl: '/aura/visual/media?id=second' });
+  const rejected = assert.rejects(second, /取消/);
+  await f.replyEvent('canplaythrough'); await f.replyEvent('playing');
+  await f.advance(1000);
+  assert.equal(f.node.dataset.auraClip, 'answer');
+  assert.equal(f.reply.getAttribute('src'), '/aura/visual/media?id=second');
+  f.control.current.clear(); await rejected; await f.ready(); await f.advance(320);
+  assert.equal(f.node.dataset.auraClip, 'front');
+  assert.equal(f.reply.getAttribute('src'), null);
 });
 
 await test('an answer preempts silent interaction without reusing its decoder or losing the last frame', async t => {
