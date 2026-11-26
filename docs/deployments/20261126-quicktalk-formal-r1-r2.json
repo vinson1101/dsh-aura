@@ -161,7 +161,7 @@
   "threeStates": {
     "installation": "完成（plugin_manager applied；profile 解析到 r2/package；package.json 版本 0.35.4-visual.5；/aura/version=0.35.4-visual.5）",
     "realSingleTurnAudiovisual": "未验证（本轮未跑推理/TTS/渲染；18765 虽已监听，但不宣称真实单句音画通过）",
-    "userAcceptance": "进行中（用户已独立确认安装、/aura/version=.5、软链 r2、lean 原片 hash、route 仅原片、认证 health ready=true；真实单句音画与 UI 由用户继续确认）"
+    "userAcceptance": "待用户测试；版本、软链、原片哈希、route和认证health由Codex独立核对，不能当作用户验收。真实单句音画与UI尚未验收。"
   },
   "rollback": "通过官方 plugin_manager 重新安装保留的 /Users/vinson/Projects/local/aura-releases/0.35.4-visual.4-quicktalk-formal-r1/package（或保留的 visual.3-r1），并可用快照 /Users/vinson/.dsh/backups/20261126-213331-aura-before-quicktalk-r2 还原 profile 清单；只重载 Aura，不重启整个 DSH。旧 .4 制品未删除。",
   "deviations": [
