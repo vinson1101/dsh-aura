@@ -1,0 +1,17 @@
+{
+  "sourceCommit": "0e0e288a8ac8136a2e1242e544c08501a2f87aac",
+  "base": "a3cc93912243c3aa2598d028ea4fcaaa98b6c986",
+  "checks": {
+    "npm test": "exit 0",
+    "character": "21/21",
+    "single-visual": "27/27",
+    "real Chromium natural answer end": {
+      "passed": true,
+      "firstFrontMs": 506.8,
+      "actualFade": true,
+      "staticFlashes": 0
+    },
+    "frozen artifact verification": "passed, 61 files"
+  },
+  "acceptanceGap": "Real microphone -> dispatched child -> QuickTalk audiovisual acknowledgement/result has not been tested in formal DSH; staged user acceptance pending. Chromium check uses real prerecorded media and production SingleCharacter, simulated response event."
+}

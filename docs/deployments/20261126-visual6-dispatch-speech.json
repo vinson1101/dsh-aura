@@ -1,0 +1,225 @@
+{
+  "deploymentId": "dsh-aura-visual6-quicktalk-formal-r1-20261126",
+  "recordedAt": "2026-11-26T22:05:00+08:00",
+  "environment": "macOS DeepSeek Harness Desktop，profile /Users/vinson/.dsh/profiles/desktop，Host http://127.0.0.1:56195；宿主 PID 38467 未重启（启动于 2026-11-19T17:12:03+08:00）",
+  "status": "installed-verified-client-hotloaded-registered-instance-closed-window-offline-real-audiovisual-unverified",
+  "上线版本": "0.35.4-visual.6",
+  "上线原因": "热部署冻结的 .6 正式包：派发子任务时前台确认语音被抑制；回答自然结束后 500ms 停留 + 320ms 淡入动态 front；打断即时。",
+  "authorization": "用户明确授权：按 deployment.md gate 先 snapshot --with-sessions，再通过官方 plugin_manager 热更新正式 desktop profile；不改源码/素材/冻结包，不重启宿主，不跑 TTS/渲染，不碰 SSH/launchd/隧道。",
+  "model": {
+    "profileDefault": "deepseek-account / deepseek-flash（cordis.patch.yml 的 agent-default-model；与安装前快照逐字节相同）",
+    "changed": false,
+    "note": "未切换或覆盖模型；未使用其它 provider。"
+  },
+  "source": {
+    "release": "0.35.4-visual.6-quicktalk-formal-r1",
+    "sourceCommit": "0e0e288a8ac8136a2e1242e544c08501a2f87aac",
+    "sourceBase": "a3cc93912243c3aa2598d028ea4fcaaa98b6c986",
+    "sourceDigest": "3b3b4f52bd24f04720e557328278be8eec2d193347326a9bd831a973f5fa0045",
+    "artifactDigest": "1df7d0a9e31d6b6ea97baee63392aa6ab41c16be2bffb176fe64cc1c21220e12",
+    "sourceWorktree": "/Users/vinson/Projects/local/dsh-aura-release-visual6",
+    "sourceWorktreeStatus": "HEAD=0e0e288（detached，无分支），父提交=a3cc939；tracked 工作树无改动；git status 仅有未跟踪的 node_modules（source.json 已记录 ?? node_modules）。",
+    "role": "仅作来源记录；安装对象是已冻结并逐文件校验的 package，未再从该 worktree 构建。"
+  },
+  "artifact": "/Users/vinson/Projects/local/aura-releases/0.35.4-visual.6-quicktalk-formal-r1/package",
+  "artifactVerification": {
+    "command": "node --experimental-vm-modules tools/verify-local-visual.mjs /Users/vinson/Projects/local/aura-releases/0.35.4-visual.6-quicktalk-formal-r1 0.35.4-visual.6",
+    "exitCode": 0,
+    "files": 61,
+    "frozenInputFiles": 59,
+    "bytes": {
+      "package": 22783233,
+      "frozenInput": 22781875
+    },
+    "independentHashCheck": {
+      "packageFiles": 61,
+      "missing": 0,
+      "extra": 0,
+      "mismatched": 0,
+      "packageTreeDigest": "1df7d0a9e31d6b6ea97baee63392aa6ab41c16be2bffb176fe64cc1c21220e12",
+      "frozenInputFiles": 59,
+      "frozenMismatched": 0,
+      "sourceDigestRecomputed": "3b3b4f52bd24f04720e557328278be8eec2d193347326a9bd831a973f5fa0045"
+    },
+    "checks": [
+      "full frozen and runtime tree hashes",
+      "exact isolated ws resolution",
+      "complete production import graph",
+      "local wrapper defaults/persisted false/invalid shape/preserved ASR and TTS"
+    ],
+    "digestsMatchGiven": true,
+    "note": "逐文件 SHA256 与 artifact.json 全等；聚合摘要复算等于 artifactDigest；sourceDigest 与 artifact.json/source.json 一致；frozen-input 59 文件同样全等。"
+  },
+  "snapshot": {
+    "path": "/Users/vinson/.dsh/backups/20261126-220326-aura-before-visual6",
+    "size": "83M",
+    "createdAt": "2026-11-26T22:03:26+08:00",
+    "scope": "cordis.patch.yml cordis.yml manifest.txt package.json pnpm-lock.yaml pnpm-workspace.yaml sessions.tar.gz",
+    "command": "~/.local/bin/dsh-snapshot save aura-before-visual6 --with-sessions",
+    "baseline": "安装前 .5（0.35.4-visual.5-quicktalk-formal-r2）状态"
+  },
+  "preInstall": {
+    "previousPackage": "/Users/vinson/Projects/local/aura-releases/0.35.4-visual.5-quicktalk-formal-r2/package",
+    "previousVersion": "0.35.4-visual.5",
+    "previousAuraVersionEndpoint": "GET http://127.0.0.1:56195/aura/version → 0.35.4-visual.5（HTTP 200）",
+    "previousSymlink": "node_modules/dsh-aura -> ../../../../Projects/local/aura-releases/0.35.4-visual.5-quicktalk-formal-r2/package",
+    "activeAuraTasks": "无进行中的收音/生成任务：无 ffmpeg/latentsync/quicktalk-server 渲染进程；aura-diag 最后一条 visual-response 为 2026-11-26T21:54:38+08:00 cancelled（ownership-revoked），此后无新生成。",
+    "tcp18765Observation": "2026-11-26T22:03 观察 ssh PID 77455 监听 127.0.0.1:18765（launchd 托管，包装进程 77449）；本任务未操作。",
+    "headroom": "文件系统 41% 已用，约 528 GiB 可用"
+  },
+  "install": {
+    "tool": "plugin_manager（官方插件管理工具）",
+    "method": "remove_bundle(dsh-aura) → install_bundle(<.6 package 绝对路径>)；未手改软链、未手改 node_modules",
+    "target": "/Users/vinson/Projects/local/aura-releases/0.35.4-visual.6-quicktalk-formal-r1/package",
+    "remove": {
+      "applied": true,
+      "changed": true,
+      "warnings": [],
+      "logPath": "/Users/vinson/.dsh/profiles/desktop/.plugin-manager/logs/operation-i4en3B/pnpm.log"
+    },
+    "install": {
+      "applied": true,
+      "changed": true,
+      "warnings": [],
+      "installedVersion": "0.35.4-visual.6",
+      "logPath": "/Users/vinson/.dsh/profiles/desktop/.plugin-manager/logs/operation-qUwRr3/pnpm.log",
+      "pnpmExitCode": 0,
+      "note": "pnpm 输出含 peer dependency 提示与 Packages: -5；退出码 0，plugin_manager warnings 为空，仅供回溯，不作为失败。"
+    }
+  },
+  "postInstall": {
+    "profileDependency": "link:/Users/vinson/Projects/local/aura-releases/0.35.4-visual.6-quicktalk-formal-r1/package",
+    "symlink": "node_modules/dsh-aura -> ../../../../Projects/local/aura-releases/0.35.4-visual.6-quicktalk-formal-r1/package（由 plugin_manager 产生）",
+    "realpath": "/Users/vinson/Projects/local/aura-releases/0.35.4-visual.6-quicktalk-formal-r1/package",
+    "packageJsonVersion": "0.35.4-visual.6",
+    "installedTree": {
+      "files": 61,
+      "missing": 0,
+      "extra": 0,
+      "mismatched": 0,
+      "installedTreeDigest": "1df7d0a9e31d6b6ea97baee63392aa6ab41c16be2bffb176fe64cc1c21220e12",
+      "note": "安装树（经 node_modules/dsh-aura）逐文件 SHA256 与 artifact.json 一致，聚合摘要等于 artifactDigest。"
+    },
+    "auraVersionEndpoint": {
+      "url": "GET http://127.0.0.1:56195/aura/version",
+      "status": 200,
+      "body": {
+        "version": "0.35.4-visual.6",
+        "origin": "http://127.0.0.1:56195"
+      }
+    },
+    "auraVisualConfig": {
+      "url": "GET http://127.0.0.1:56195/aura/visual/config",
+      "status": 401,
+      "body": {
+        "error": "Browser authentication required"
+      },
+      "auth": "端点要求浏览器会话；本会话无该 Cookie，未输出或落盘任何凭据。",
+      "diagEvidence": "~/.dsh/aura-diag.jsonl 2026-11-26T22:03:34.519+08:00：v0.35.4-visual.6 visual_backend enabled=true provider=quicktalk（Host 自身 visualOptions）",
+      "enabled": true,
+      "provider": "quicktalk",
+      "editable": "未直接实测；configEditor 插件活跃（inspect 可见），不声称已实测 200 JSON。"
+    },
+    "client": {
+      "status": "已热加载注册；但实例以 code 1006 关闭且 hidden=true，当前窗口不能视为在线",
+      "evidence": "~/.dsh/aura-diag.jsonl 2026-11-26T22:03:34+08:00：v0.35.4-visual.6 visual_backend(enabled=true, provider=quicktalk) → factory(.653) → apply(.654) → instance_owned(.687, session-b498…) → character_support(h264=probably/vp9=probably) → run_watch(running=false)",
+      "instanceClose": "2026-11-26T22:03:54.524+08:00 instance_close(code=1006, wasClean=false, hidden=true)，随后 mic_stop_empty；之后无新的注册/实例行",
+      "registeredLine": "未出现 v0.35.4-visual.6 的 registered(tabs/body/title/open) 独立行；标签级注册证据缺失，不声称标签已确认。",
+      "clientInspect": "client Slots.listSubTree 与 Service.listService 各 10s 超时（页面侧桥不可用），未取得标签/面板树",
+      "refresh": "需用户重开/刷新 Aura 页一次；本任务未刷新页面、未重启宿主。",
+      "conclusion": "client 已热加载注册并在 .6 上接手实例，但 22:03:54 instance_close(1006, hidden=true) 且 registered 行缺失；当前窗口不在线，需用户重开/刷新 Aura 页一次，不宣称 UI 已验收。"
+    },
+    "otherPlugins": "未改动其它插件；未应用其它插件待重启变更。",
+    "hostRestarted": false
+  },
+  "quickTalkChannel": {
+    "listener": "127.0.0.1:18765 由 ssh PID 77455 监听（launchd 托管包装进程 77449）",
+    "endpoint": "GET http://127.0.0.1:18765/health（Authorization: Bearer <~/.dsh/aura-secrets.env 的 AURA_QUICKTALK_TOKEN，只在进程内读取，未输出>）",
+    "httpStatus": 200,
+    "latencyMs": 140.7,
+    "ready": true,
+    "version": "quicktalk-v3",
+    "parts": true,
+    "cpuThreads": 8,
+    "engineSha256": "3c212e7aeff887200d5cd9e598dff2524cbdf7d870de0cc26972e7bdb878a645",
+    "sourceSha256": "620d5586a80d6507a996eae9913933b103d3154ebbb49ecef90ecf839ea7e97f",
+    "matchesPriorChannelRestoredRecord": true,
+    "management": "隧道由用户 launchd 托管；本任务未操作 SSH/launchd/隧道，未停 vLLM 或远端任何进程；此处仅作观察记录。",
+    "renderOrTts": "本轮未执行推理/TTS/渲染，未声称真实音画通过。"
+  },
+  "preservedConfig": {
+    "profilePatch": {
+      "path": "/Users/vinson/.dsh/profiles/desktop/cordis.patch.yml",
+      "identicalToSnapshot": true,
+      "asr": "provider=bailian_paraformer_realtime, model=paraformer-realtime-v2",
+      "tts": "model=cosyvoice-v3-flash",
+      "agentDefaultModel": "provider=deepseek-account, model=deepseek-flash"
+    },
+    "secrets": {
+      "path": "/Users/vinson/.dsh/aura-secrets.env",
+      "mode": "0600",
+      "sizeBytes": 247,
+      "mtime": "2026-11-26T16:17:22+08:00（早于本次安装）",
+      "keysPresent": [
+        "DASHSCOPE_API_KEY",
+        "AURA_QUICKTALK_TOKEN"
+      ],
+      "valuesPrinted": false,
+      "changed": false,
+      "note": "只读比对存在性与权限；未打印值，未写入任何凭据。"
+    },
+    "visualConfigSource": "package 内 local-visual-config.json（.6 与 .5-r2 逐字节相同）：enabled=true, provider=quicktalk, remoteUrl=http://127.0.0.1:18765；未复制隔离 workDir/模型覆盖。"
+  },
+  "evidence": {
+    "npmTest": "冻结构建报告：npm test 完整执行 exit 0（本任务未重跑，只引用）。",
+    "chromiumTransition": {
+      "path": "/tmp/aura-answer-transition-evidence.json",
+      "readOnlyReference": true,
+      "copiedIntoPackage": false,
+      "summary": {
+        "passed": true,
+        "samples": 117,
+        "lastAnswerSampleMs": 498.4,
+        "firstFrontSampleMs": 506.8,
+        "fadeSpanMs": 325.4,
+        "staticFramesShown": 0
+      },
+      "interpretation": "与描述一致：约 507ms 回 front、约 320ms fade、静态闪回 0；这是冻结构建时用真实 Chromium/真实素材的自然结束转场测试，属组件级证据。",
+      "notEquivalentTo": "不是真实麦克风 → 派工 → 5090 新回答的端到端音画验收。",
+      "persistedCopy": "docs/deployments/evidence/visual6/answer-transition.json"
+    },
+    "persistedLocalChecks": "docs/deployments/evidence/visual6/checks.json",
+    "rootIndependentVerification": {
+      "installedFilesMatched": 61,
+      "version": "0.35.4-visual.6",
+      "quickTalkReady": true,
+      "sourcePushed": "0e0e288a8ac8136a2e1242e544c08501a2f87aac"
+    }
+  },
+  "threeStates": {
+    "installation": "完成（plugin_manager applied；profile 软链解析到 .6/package；package.json=0.35.4-visual.6；/aura/version=0.35.4-visual.6；61/61 逐文件哈希与聚合摘要全等）",
+    "realSingleTurnAudiovisual": "未验证（真实麦克风→派工→5090 新回答 E2E 未做；本轮未跑真实收音/推理/TTS/渲染。属分阶段验收，待用户真实复测；不可宣称音画实测通过）",
+    "userAcceptance": "未开始（待用户重开/刷新 Aura 页并做真实单句验收）"
+  },
+  "rollback": "通过官方 plugin_manager remove_bundle(dsh-aura) → install_bundle(/Users/vinson/Projects/local/aura-releases/0.35.4-visual.5-quicktalk-formal-r2/package) 回退到 .5-r2；必要时用快照 /Users/vinson/.dsh/backups/20261126-220326-aura-before-visual6 还原 profile 清单。只重载 Aura，不重启整个 DSH。.5-r2 制品与 .6 均保留。",
+  "deviations": [
+    "为安装新版本，按 plugin_manager 既有唯一路径先 remove_bundle 再 install_bundle。",
+    "pnpm 日志含 peer dependency 提示与 Packages: -5；退出码 0、plugin_manager warnings 为空，不作为失败。",
+    "/aura/visual/config 无浏览器会话返回 401；enabled/provider 改由 Host 自身 visual_backend 诊断行佐证，editable 未实测。",
+    "client 已热加载注册，但 instance_close 1006/hidden=true 且未出现 registered 独立行；client inspect 两次 10s 超时；页面刷新/重开未由本任务执行（无浏览器控制），保留为用户一步操作。",
+    "source worktree 为 detached HEAD 0e0e288，tracked 树干净，仅有未跟踪 node_modules（source.json 已记录）；安装对象是冻结 package，不是该 worktree 的实时状态。",
+    "18765/ssh/launchd 状态仅作前后观察，不归因于本任务。"
+  ],
+  "records": {
+    "releaseRecord": "/Users/vinson/Projects/local/aura-releases/0.35.4-visual.6-quicktalk-formal-r1/deployment.json",
+    "repoRecord": "docs/deployments/20261126-visual6-dispatch-speech.json（新文件）",
+    "preservedRecords": [
+      "docs/deployments/20261125-quicktalk-formal-r1.json",
+      "docs/deployments/20261126-quicktalk-formal-r1-install.json",
+      "docs/deployments/20261126-quicktalk-channel-restored.json",
+      "docs/deployments/20261126-quicktalk-tunnel-keepalive.json",
+      "docs/deployments/20261126-quicktalk-formal-r1-r2.json"
+    ]
+  },
+  "noSourceOrMediaChanges": "只部署与验证；未修改源码/素材/冻结包；未 git commit/push；未重启宿主；未操作 SSH/launchd/隧道；未跑 TTS/渲染。"
+}
